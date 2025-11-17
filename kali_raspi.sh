@@ -554,13 +554,9 @@ install_kali_full() {
         # 这里使用简单的整数除法 (KB -> GB: 除以 1024^2)
         available_space_gb=$(( available_space_kb / 1024 / 1024 ))
     fi
-
     if [[ $available_space_gb -lt $required_space_gb ]]; then
-
-        echo -e "${YELLOW}[!] 警告：根分区可用空间可能不足 (~${available_space_gb}GB < ${required_space_gb}GB)。${NC}"
-
+        echo -e "${YELLOW}[!] 警告：根分区可用空间可能不足 (~${available_space_gb}GB < ${required_space_gb}GB)。${NC}"\
         read -p "[?] 空间可能不足，仍要继续吗? (y/N): " -n 1 -r
-
         echo
         # (y/N): N 是大写，为默认值。回车等同于 'N' (即取消)
         if [[ $REPLY =~ ^[Yy]$ ]]; then
