@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.3.4"
+SCRIPT_VERSION="v0.3.5"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -628,7 +628,8 @@ do_install_oled091_driver() {
     local repo_name="raspi-oled-091"
     local release_version="v1.0"
     local zip_name="raspi-oled-091.zip"
-    local install_dir="/usr/share/${repo_name}"
+    #local install_dir="/usr/share/${repo_name}"
+    local install_dir="/usr/share"
     local script_path="${install_dir}/main.py"
 
     # --- 步骤 1: 检查并创建安装目录 ---
