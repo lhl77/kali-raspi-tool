@@ -97,7 +97,7 @@ show_main_menu() {
     echo "4) 更新脚本 (来自 GitHub: lhl77/kali-raspi-tool)"
     echo "0) 退出"
     echo "----------------------------------"
-    read -p "请选择分类 (0-3): " main_choice
+    read -p "请选择分类 (0-4): " main_choice
 }
 
 show_system_menu() {
