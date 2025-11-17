@@ -15,7 +15,8 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="v0.2.4"
+# 脚本版本
+SCRIPT_VERSION="v0.2.4" # <-- 版本号由此行定义
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -185,20 +186,25 @@ EOF
         echo "[*] 已跳过中文字体安装。"
     fi
 }
-
 perform_x11vnc_setup() {
     echo "[*] 开始配置 x11vnc VNC 服务..."
 
-    echo "[*] 正在安装 x11vnc..."
-    if ! sudo apt install -y x11vnc; then
-        echo "[-] x11vnc 安装失败。"
-        return 1
+    # 安装 x11vnc（如果未安装）
+    if ! dpkg -l | grep -q "^ii.*x11vnc"; then
+        echo "[*] 正在安装 x11vnc..."
+        if ! sudo apt install -y x11vnc; then
+            echo "[-] x11vnc 安装失败。"
+            return 1
+        fi
+    else
+        echo "[+] x11vnc 已安装。"
     fi
 
-    echo "[*] 设置 VNC 密码。"
-    echo "    请输入 VNC 连接密码 (最长8位字符，区分大小写):"
+    # 设置 VNC 密码（存储在 /root/.vnc/passwd）
+    echo "[*] 设置 VNC 密码（仅用于 root 用户）："
     sudo x11vnc -storepasswd
 
+    # 创建或更新 systemd 服务文件
     local service_file="/lib/systemd/system/x11vnc.service"
     if sudo tee "$service_file" > /dev/null <<EOF
 [Unit]
@@ -213,76 +219,128 @@ ExecStart=/usr/bin/x11vnc -auth guess -nap -forever -loop -repeat -rfbauth /root
 WantedBy=multi-user.target
 EOF
     then
-        echo "[+] x11vnc 服务配置文件已创建: $service_file"
+        echo "[+] x11vnc 服务配置已更新。"
+        sudo systemctl daemon-reload
+        sudo systemctl enable x11vnc.service
     else
-        echo "[-] 创建 x11vnc 服务配置文件失败。"
+        echo "[-] 无法写入 x11vnc 服务文件。"
         return 1
     fi
 
-    echo "[*] 重新加载 systemd 配置并启用 x11vnc 服务..."
-    sudo systemctl daemon-reload
-    sudo systemctl enable x11vnc.service
+    # 检测当前是否有物理显示器连接
+    local has_display=false
+    if xrandr --query &>/dev/null; then
+        if xrandr | grep -q " connected" && ! xrandr | grep -q " disconnected"; then
+            has_display=true
+        fi
+    fi
 
-    echo "[*] 检查是否连接了外部显示器..."
-    if xrandr | grep -q " connected"; then
-        echo "[*] 检测到外部显示器连接。x11vnc 将共享现有显示器画面。"
-        echo "[*] 配置完成。x11vnc 服务将在下次启动时自动运行。"
-        echo "[!] 您可以立即使用 'sudo systemctl start x11vnc' 来启动服务测试。"
+    local xorg_conf="/etc/X11/xorg.conf"
+    local dummy_backup="${xorg_conf}_bak_dummy"
+
+    if [[ "$has_display" == true ]]; then
+        echo "[*] 检测到物理显示器已连接。"
+        # 如果存在 _bak_dummy 备份，说明之前是无头模式，询问是否切换回来
+        if [[ -f "$dummy_backup" ]]; then
+            echo -e "${YELLOW}[!] 检测到之前配置过无头（虚拟显示器）模式。${NC}"
+            read -p "[?] 是否切换回使用物理显示器？(这将删除虚拟显示器配置) (Y/n): " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                echo "[*] 正在恢复物理显示器模式..."
+                # 删除当前 xorg.conf（如果是 dummy 的）
+                if [[ -f "$xorg_conf" ]]; then
+                    sudo rm -f "$xorg_conf"
+                fi
+                # 删除备份标记（表示不再使用 dummy）
+                sudo rm -f "$dummy_backup"
+                echo "[+] 已切换回物理显示器模式。"
+            else
+                echo "[*] 保留当前虚拟显示器配置。"
+            fi
+        else
+            echo "[+] 将使用当前物理显示器画面进行 VNC 共享。"
+            # 确保没有残留的 dummy 配置
+            if [[ -f "$xorg_conf" ]]; then
+                echo "[*] 检测到存在 /etc/X11/xorg.conf，但当前有显示器。"
+                read -p "[?] 是否保留此配置？(建议删除以避免冲突) (Y=保留, n=删除): " -n 1 -r
+                echo
+                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                    sudo rm -f "$xorg_conf"
+                    echo "[+] 已删除 /etc/X11/xorg.conf。"
+                fi
+            fi
+        fi
+
     else
-        echo "[*] 未检测到外部显示器。将配置虚拟显示器以支持无头 VNC。"
-        echo "[!] 注意：配置虚拟显示器需要重启系统。"
-
-        echo "[*] 正在安装虚拟显示器所需包 (xserver-xorg-core, xserver-xorg-video-dummy)..."
-        if ! sudo apt install -y xserver-xorg-core xserver-xorg-video-dummy; then
-            echo "[-] 安装虚拟显示器包失败。"
-            return 1
+        echo "[*] 未检测到物理显示器（无头模式）。"
+        # 安装虚拟显示器驱动
+        if ! dpkg -l | grep -q "^ii.*xserver-xorg-video-dummy"; then
+            echo "[*] 安装虚拟显示器所需包..."
+            if ! sudo apt install -y xserver-xorg-core xserver-xorg-video-dummy; then
+                echo "[-] 虚拟显示器包安装失败。"
+                return 1
+            fi
         fi
 
-        local xorg_conf="/etc/X11/xorg.conf"
-        if [ -f "$xorg_conf" ]; then
-            echo "[*] 备份现有 X11 配置文件..."
-            sudo cp "$xorg_conf" "$xorg_conf.bak_$(date +%Y%m%d_%H%M%S)"
+        # 如果当前有 xorg.conf 且不是 dummy 备份，先备份原文件（谨慎处理）
+        if [[ -f "$xorg_conf" ]] && [[ ! -f "$dummy_backup" ]]; then
+            echo "[*] 备份现有 X11 配置为 ${xorg_conf}.orig ..."
+            sudo cp "$xorg_conf" "${xorg_conf}.orig"
         fi
 
-        echo "[*] 创建虚拟显示器 X11 配置文件..."
+        # 创建虚拟显示器配置
+        echo "[*] 配置虚拟显示器（1280x720）..."
         if sudo tee "$xorg_conf" > /dev/null <<EOF
 Section "Device"
-    Identifier  "Configured Video Device"
+    Identifier  "DummyDevice"
     Driver      "dummy"
+    Option      "IgnoreEDID" "true"
 EndSection
 
 Section "Monitor"
-    Identifier  "Configured Monitor"
-    HorizSync 31.5-48.5
-    VertRefresh 50-70
+    Identifier  "DummyMonitor"
+    HorizSync   28.0-80.0
+    VertRefresh 48.0-75.0
 EndSection
 
 Section "Screen"
-    Identifier  "Default Screen"
-    Monitor     "Configured Monitor"
-    Device      "Configured Video Device"
+    Identifier  "DummyScreen"
+    Device      "DummyDevice"
+    Monitor     "DummyMonitor"
     DefaultDepth 24
     SubSection "Display"
-    Depth 24
-    Modes "1280x720"
+        Depth   24
+        Modes   "1280x720"
     EndSubSection
 EndSection
 EOF
         then
-            echo "[+] 虚拟显示器 X11 配置文件已创建/修改: $xorg_conf"
-            echo "[+] 配置完成。"
-            local REPLY
-            read -p "[?] 是否现在重启系统以应用虚拟显示器配置？(按 Y 确认, 其他键跳过): " -n 1 -r
-            echo
-            if [[ $REPLY =~ ^[Yy]$ ]]; then
-                echo "[*] 正在重启系统..."
-                sudo reboot
-            else
-                echo "[*] 请在方便时手动执行 'sudo reboot' 以应用配置。"
-            fi
+            echo "[+] 虚拟显示器配置已写入 $xorg_conf"
+            # 创建标记文件，表示当前是 dummy 模式
+            sudo touch "$dummy_backup"
+            echo "[*] 已标记为无头（虚拟显示器）模式。"
         else
-            echo "[-] 创建 X11 配置文件失败。"
+            echo "[-] 无法写入虚拟显示器配置。"
             return 1
+        fi
+    fi
+
+    echo ""
+    echo -e "${GREEN}[+] x11vnc 配置完成！${NC}"
+    echo "    - 服务已启用，开机自启。"
+    echo "    - VNC 端口: 5900"
+    echo "    - 使用 'sudo systemctl start x11vnc' 可立即启动服务（无需重启）。"
+
+    # 提示重启（仅当切换了显示模式时才强烈建议）
+    if [[ "$has_display" == false ]] || [[ -f "$dummy_backup" && "$has_display" == true ]]; then
+        echo ""
+        read -p "[?] 为使显示配置生效，建议重启系统。是否现在重启？(Y/n): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            echo "[*] 正在重启..."
+            sudo reboot
+        else
+            echo "[*] 请在方便时手动执行 'sudo reboot'。"
         fi
     fi
 }
@@ -419,32 +477,18 @@ perform_script_update() {
     if [[ $download_success -eq 1 ]]; then
         echo "[*] 找到新版本脚本。"
 
-        # --- 修改版本提取逻辑，增加调试和容错 ---
-        # 尝试更宽松地匹配包含 "脚本版本" 的行
-        local remote_version_line=$(grep -m 1 "脚本版本" "$temp_script")
-        echo "[DEBUG] 匹配到的远程版本行: '$remote_version_line'" # 调试输出
+        # --- 修改版本提取逻辑 ---
+        # 直接查找包含 SCRIPT_VERSION= 定义的行，这行包含了实际的版本号
+        local remote_version_line=$(grep -m 1 '^SCRIPT_VERSION=' "$temp_script")
+        #echo "[DEBUG] 匹配到的远程版本行: '$remote_version_line'" # 调试输出
 
         local remote_version=""
         if [[ -n "$remote_version_line" ]]; then
-            # 尝试几种常见的版本号格式提取方式
-            # 1. 标准格式 v1.2.3 或 v1.2
-            remote_version=$(echo "$remote_version_line" | grep -oE 'v[0-9]+\.[0-9]+(\.[0-9]+)?')
-            echo "[DEBUG] 方式1提取的版本号: '$remote_version'" # 调试输出
-
-            # 2. 如果方式1失败，尝试 1.2.3 或 1.2 (无v前缀)
-            if [[ -z "$remote_version" ]]; then
-               remote_version=$(echo "$remote_version_line" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?')
-               echo "[DEBUG] 方式2提取的版本号: '$remote_version'" # 调试输出
-            fi
-
-            # 3. 如果方式2也失败，尝试直接从 SCRIPT_VERSION 变量格式匹配
-            #    (假设远程脚本的版本行和本地一样是 SCRIPT_VERSION="vx.x.x")
-            if [[ -z "$remote_version" ]]; then
-                # 提取等号后面引号内的内容
-                remote_version=$(echo "$remote_version_line" | sed -n 's/.*SCRIPT_VERSION="\([^"]*\)".*/\1/p')
-                echo "[DEBUG] 方式3提取的版本号: '$remote_version'" # 调试输出
-            fi
+            # 从 SCRIPT_VERSION="vx.x.x" 格式的行中提取双引号内的版本号
+            remote_version=$(echo "$remote_version_line" | sed -n 's/.*SCRIPT_VERSION="\([^"]*\)".*/\1/p')
+            #echo "[DEBUG] 提取的版本号: '$remote_version'" # 调试输出
         fi
+        # --- 结束修改 ---
 
         if [[ -n "$remote_version" ]]; then
             echo "[*] 远程脚本版本: $remote_version"
@@ -495,7 +539,6 @@ perform_script_update() {
             echo "    远程脚本可能存在格式问题，或版本号格式不兼容。"
             rm -f "$temp_script" # 清理临时文件
         fi
-        # --- 结束修改版本提取逻辑 ---
     else
         echo "[-] 所有尝试的源都无法下载有效的脚本。请检查网络连接或稍后再试。"
         rm -f "$temp_script" # 清理临时文件
