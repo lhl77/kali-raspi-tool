@@ -15,7 +15,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.2.7"
+SCRIPT_VERSION="v0.2.8"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -92,7 +92,7 @@ show_main_menu() {
     echo "     树莓派 Kali Linux 工具箱 $SCRIPT_VERSION"
     echo "=================================="
     echo "分类菜单："
-    echo "1) 系统设置"
+    echo "1) Kali Linux系统"
     echo "2) 远程访问"
     echo "3) 更新脚本 (来自 GitHub: lhl77/kali-raspi-tool)"
     echo "0) 退出"
@@ -107,9 +107,10 @@ show_system_menu() {
     echo "         系统设置"
     echo "=================================="
     echo "1) 1.1 - 系统汉化（设置为简体中文）"
+    echo "2) 1.2 - 安装 Kali Linux 完整工具集 (kali-linux-everything)"
     echo "0) 返回主菜单"
     echo "----------------------------------"
-    read -p "请选择功能 (0, 1): " system_choice
+    read -p "请选择功能 (0-2): " system_choice
 }
 
 show_remote_menu() {
@@ -118,7 +119,7 @@ show_remote_menu() {
     echo "=================================="
     echo "         远程访问"
     echo "=================================="
-    echo "1) 2.1 - 配置 x11vnc VNC 服务 (推荐)"
+    echo "1) 2.1 - 配置 x11vnc VNC 服务"
     echo "2) 2.2 - SSH 访问控制 (启用/禁用/状态)"
     echo "3) 2.3 - 切换 VNC 显示模式（有显示器 ↔ 无头）"
     echo "0) 返回主菜单"
@@ -527,6 +528,97 @@ EOF
     fi
 }
 
+install_kali_full() {
+    echo "[*] Kali Linux 完整工具集安装"
+    echo ""
+
+    # 1. 检查是否为 Kali 系统
+    if [ "$IS_KALI" -ne 1 ]; then
+        echo -e "${RED}[-] 错误：此功能仅适用于 Kali Linux 系统。${NC}"
+        echo -e "${RED}    检测到系统: $SYSTEM_NAME $SYSTEM_VERSION${NC}"
+        return 1
+    fi
+    echo -e "${GREEN}[+] 确认为 Kali Linux 系统 ($SYSTEM_VERSION)${NC}"
+
+    # 2. 检查磁盘空间 (可选但推荐)
+    # 简单估算，kali-linux-everything 及其依赖可能需要数 GB 空间
+    local required_space_gb=10 # 估算值，可根据需要调整
+    local available_space_kb
+    local available_space_gb
+    available_space_kb=$(df / | awk 'NR==2 {print $4}') # 获取根分区可用空间 KB
+    if [[ -z "$available_space_kb" ]]; then
+        echo -e "${YELLOW}[!] 警告：无法确定磁盘空间。将继续安装。${NC}"
+        available_space_gb=0 # 设为0，跳过检查
+    else
+        # 使用 awk 进行浮点运算 (更精确) 或者简单的 bash 整数运算
+        # 这里使用简单的整数除法 (KB -> GB: 除以 1024^2)
+        available_space_gb=$(( available_space_kb / 1024 / 1024 ))
+    fi
+
+    if [[ $available_space_gb -lt $required_space_gb ]]; then
+        echo -e "${YELLOW}[!] 警告：根分区可用空间可能不足 (~${available_space_gb}GB < ${required_space_gb}GB)。${NC}"
+        read -p "[?] 空间可能不足，仍要继续吗? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+           echo "[*] 已取消安装。"
+           return 0
+        fi
+    else
+        echo -e "${GREEN}[+] 磁盘空间检查通过 (可用 ~${available_space_gb}GB)${NC}"
+    fi
+
+    # 3. 用户最终确认
+    echo ""
+    echo -e "${YELLOW}即将安装 'kali-linux-everything' Meta 包。${NC}"
+    echo "    这将下载并安装大量的工具和依赖项。"
+    echo "    过程可能耗时较长，取决于网络速度和硬件性能。"
+    echo "    请确保系统已连接到互联网。"
+    echo ""
+    read -p "[?] 确认开始安装? (输入 'YES' 继续): " confirmation
+    echo
+
+    if [[ "$confirmation" != "YES" ]]; then
+        echo "[*] 输入不匹配，已取消安装。"
+        return 0
+    fi
+
+    echo "[*] 开始安装 Kali Linux 完整工具集..."
+    echo "[*] 正在更新软件包列表..."
+    if ! sudo apt update; then
+        echo -e "${RED}[-] apt update 失败。${NC}"
+        return 1
+    fi
+
+    echo "[*] 正在升级现有软件包 (推荐)..."
+    # 使用 -y 自动确认升级
+    if ! sudo apt upgrade -y; then
+        echo -e "${YELLOW}[!] apt upgrade 遇到问题或被中断，但这不是致命错误。${NC}"
+        # 不返回错误，因为用户可能选择 'n' 或网络中断等非致命原因
+        # 可以让用户自行决定是否继续安装 meta 包
+        read -p "[?] 是否忽略升级错误并继续安装 kali-linux-everything? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+           echo "[*] 已取消安装。"
+           return 0
+        fi
+    fi
+
+    echo "[*] 正在安装 kali-linux-everything Meta 包..."
+    # 使用 -y 自动确认安装
+    if sudo apt install -y kali-linux-everything; then
+        echo -e "${GREEN}[+] Kali Linux 完整工具集安装成功！${NC}"
+        echo -e "${GREEN}[+] 建议重启系统以确保所有更改生效。${NC}"
+    else
+        echo -e "${RED}[-] Kali Linux 完整工具集安装过程中出现错误。${NC}"
+        # 提供故障排除建议
+        echo "    可尝试手动运行以下命令排查问题："
+        echo "      sudo apt update"
+        echo "      sudo apt install -f # 修复依赖"
+        echo "      sudo apt install kali-linux-everything"
+        return 1
+    fi
+}
+
 perform_script_update() {
     local repo_owner="lhl77"
     local repo_name="kali-raspi-tool"
@@ -619,6 +711,7 @@ while true; do
             while true; do
                 show_system_menu
                 case "$system_choice" in
+                    2) install_kali_full;read -p "按回车返回主菜单...";;
                     1) perform_chinese_setup; read -p "按回车返回...";;
                     0) break;;
                     *) echo "[-] 无效选项"; sleep 1;;
