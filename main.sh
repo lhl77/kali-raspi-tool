@@ -15,7 +15,6 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# 脚本版本
 SCRIPT_VERSION="v0.2.4"
 
 check_privileges() {
@@ -381,7 +380,7 @@ perform_ssh_control() {
 }
 # ----------------------------
 
-# --- 更新脚本功能 (增加国内镜像 + 改进版本比较) ---
+# --- 更新脚本功能 (增加国内镜像 + 改进版本比较 + 优化提示 + 修复版本提取) ---
 perform_script_update() {
     local repo_owner="lhl77"
     local repo_name="kali-raspi-tool"
@@ -389,8 +388,8 @@ perform_script_update() {
 
     # 定义多个下载源 URL，包括镜像和官方
     local urls=(
-        "https://ghproxy.net/https://raw.githubusercontent.com/$repo_owner/$repo_name/main/$script_name"
         "https://raw.githubusercontent.com/$repo_owner/$repo_name/main/$script_name" # 官方源
+        "https://ghproxy.net/https://raw.githubusercontent.com/$repo_owner/$repo_name/main/$script_name"
     )
 
     echo "[*] 正在从 GitHub ($repo_owner/$repo_name) 检查更新..."
@@ -420,22 +419,43 @@ perform_script_update() {
     if [[ $download_success -eq 1 ]]; then
         echo "[*] 找到新版本脚本。"
 
-        # 读取远程脚本的版本号（通过查找包含 "脚本版本" 的行）
-        local remote_version_line=$(grep -m 1 "脚本版本" "$temp_script" | head -n 1)
+        # --- 修改版本提取逻辑，增加调试和容错 ---
+        # 尝试更宽松地匹配包含 "脚本版本" 的行
+        local remote_version_line=$(grep -m 1 "脚本版本" "$temp_script")
+        echo "[DEBUG] 匹配到的远程版本行: '$remote_version_line'" # 调试输出
+
+        local remote_version=""
         if [[ -n "$remote_version_line" ]]; then
-            # 提取版本号，例如从 "脚本版本 v2.1" 中提取 v2.1
-            # 改进正则以匹配 v0.x.x 格式
-            local remote_version=$(echo "$remote_version_line" | grep -oE 'v[0-9]+\.[0-9]+\.?[0-9]*')
+            # 尝试几种常见的版本号格式提取方式
+            # 1. 标准格式 v1.2.3 或 v1.2
+            remote_version=$(echo "$remote_version_line" | grep -oE 'v[0-9]+\.[0-9]+(\.[0-9]+)?')
+            echo "[DEBUG] 方式1提取的版本号: '$remote_version'" # 调试输出
+
+            # 2. 如果方式1失败，尝试 1.2.3 或 1.2 (无v前缀)
+            if [[ -z "$remote_version" ]]; then
+               remote_version=$(echo "$remote_version_line" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?')
+               echo "[DEBUG] 方式2提取的版本号: '$remote_version'" # 调试输出
+            fi
+
+            # 3. 如果方式2也失败，尝试直接从 SCRIPT_VERSION 变量格式匹配
+            #    (假设远程脚本的版本行和本地一样是 SCRIPT_VERSION="vx.x.x")
+            if [[ -z "$remote_version" ]]; then
+                # 提取等号后面引号内的内容
+                remote_version=$(echo "$remote_version_line" | sed -n 's/.*SCRIPT_VERSION="\([^"]*\)".*/\1/p')
+                echo "[DEBUG] 方式3提取的版本号: '$remote_version'" # 调试输出
+            fi
+        fi
+
+        if [[ -n "$remote_version" ]]; then
             echo "[*] 远程脚本版本: $remote_version"
 
             # 使用 sort -V 进行版本号比较
-            # 将当前版本和远程版本放入一个列表，按版本号排序
-            # 如果排序后远程版本在最后，说明它更新
             local version_list=$(printf '%s\n%s' "$SCRIPT_VERSION" "$remote_version" | sort -V)
             local latest_version=$(echo "$version_list" | tail -n 1)
 
+            # --- 修改提示逻辑 ---
             if [[ "$latest_version" == "$remote_version" ]] && [[ "$SCRIPT_VERSION" != "$remote_version" ]]; then
-                echo -e "${YELLOW}[*] 发现新版本: $remote_version${NC}"
+                echo -e "${YELLOW}[*] 发现新版本: $remote_version${NC}" # 黄色提示发现新版本
                 local REPLY
                 read -p "[?] 是否更新当前脚本 (当前版本: $SCRIPT_VERSION)？(按 Y 确认, 其他键跳过): " -n 1 -r
                 echo
@@ -461,16 +481,21 @@ perform_script_update() {
                     rm -f "$temp_script" # 清理临时文件
                 fi
             elif [[ "$SCRIPT_VERSION" == "$remote_version" ]]; then
-                echo "[*] 当前已是最新版本。"
+                echo -e "${GREEN}[+] 当前已是最新版本 ($SCRIPT_VERSION)。${NC}" # 绿色提示已是最新版
                 rm -f "$temp_script" # 清理临时文件
             else
+                # 理论上不太可能发生，但为了完整性考虑
                 echo "[*] 检测到的版本 ($remote_version) 不比当前版本 ($SCRIPT_VERSION) 新。"
+                echo -e "${GREEN}[+] 当前版本 ($SCRIPT_VERSION) 似乎比检测到的版本 ($remote_version) 更新。${NC}"
                 rm -f "$temp_script" # 清理临时文件
             fi
+            # --- 结束修改 ---
         else
-            echo "[-] 无法从远程脚本中解析版本号。"
+            echo "[-] 无法从远程脚本中解析出有效的版本号。"
+            echo "    远程脚本可能存在格式问题，或版本号格式不兼容。"
             rm -f "$temp_script" # 清理临时文件
         fi
+        # --- 结束修改版本提取逻辑 ---
     else
         echo "[-] 所有尝试的源都无法下载有效的脚本。请检查网络连接或稍后再试。"
         rm -f "$temp_script" # 清理临时文件
