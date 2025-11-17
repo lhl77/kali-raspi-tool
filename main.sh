@@ -15,7 +15,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.2.5"
+SCRIPT_VERSION="v0.2.6"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -170,6 +170,7 @@ EOF
         echo "[*] 安装 fonts-wqy-microhei..."
         if sudo apt install -y fonts-wqy-microhei; then
             echo "[+] 中文字体已安装。"
+            echo "[!] 请重新登录或重启以生效汉化配置。"
         else
             echo "[-] 字体安装失败。"
         fi
@@ -181,127 +182,75 @@ EOF
 perform_x11vnc_setup() {
     echo "[*] 开始配置 x11vnc VNC 服务..."
 
+    # 1. 安装 x11vnc (如果尚未安装)
     if ! dpkg -l | grep -q "^ii.*x11vnc"; then
         echo "[*] 安装 x11vnc..."
+        if ! sudo apt update; then
+            echo "[-] apt 更新失败。"
+            return 1
+        fi
         if ! sudo apt install -y x11vnc; then
             echo "[-] x11vnc 安装失败。"
             return 1
         fi
+        echo "[+] x11vnc 安装成功。"
+    else
+        echo "[+] x11vnc 已安装。"
     fi
 
+    # 2. 设置 VNC 密码
     echo "[*] 设置 VNC 密码（存储于 /root/.vnc/passwd）："
     sudo x11vnc -storepasswd
 
+    # 3. 创建或覆盖 systemd 服务文件
     local service_file="/lib/systemd/system/x11vnc.service"
+    echo "[*] 配置 systemd 服务文件: $service_file"
+    
+    # 注意：使用 -auth guess 让 x11vnc 自动寻找合适的认证方式，
+    # 这样无论当前是物理显示还是虚拟显示都能适配。
+    # -display :0 也可以尝试，但 -auth guess 更通用。
+    # 如果遇到权限问题，可能需要调整 DISPLAY 环境变量或使用 -findauth
     if sudo tee "$service_file" > /dev/null <<EOF
 [Unit]
 Description=Start x11vnc at startup.
-After=multi-user.target
+After=multi-user.target graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/x11vnc -auth guess -nap -forever -loop -repeat -rfbauth /root/.vnc/passwd -rfbport 5900
+# -auth guess: 自动查找 X 授权文件
+# -forever: 即使客户端断开也持续监听
+# -loop: 断开后重新等待新连接
+# -noxdamage: 解决某些环境下的性能问题 (可选)
+# -repeat: 正确处理键盘重复按键
+# -rfbauth: 指定密码文件
+# -rfbport: 指定监听端口
+# -shared: 允许多个客户端同时连接 (可选)
+# -o /var/log/x11vnc.log -l /var/log/x11vnc.log: 日志输出 (可选)
+ExecStart=/usr/bin/x11vnc -auth guess -forever -loop -repeat -rfbauth /root/.vnc/passwd -rfbport 5900 -shared -noxdamage -o /var/log/x11vnc.log
+Restart=on-failure
+RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=graphical-session.target
 EOF
     then
         echo "[+] x11vnc 服务配置完成。"
+        
+        # 4. 重新加载 systemd 配置并启用服务
+        echo "[*] 重新加载 systemd 配置..."
         sudo systemctl daemon-reload
+        
+        echo "[*] 启用 x11vnc 服务开机自启..."
         sudo systemctl enable x11vnc.service
+        
+        echo -e "${GREEN}[+] x11vnc 配置完成！端口: 5900${NC}"
+        echo "    使用 'sudo systemctl start x11vnc' 可立即启动服务。"
+        echo "    注意：请确保 X Server 已运行（例如，用户已登录图形界面）。"
+        echo "          若要在无头模式下工作，请先使用 '2.3 - 手动切换 VNC 显示模式' 配置虚拟显示器。"
+        
     else
         echo "[-] 服务文件写入失败。"
         return 1
-    fi
-
-    local has_display=false
-    if xrandr --query &>/dev/null; then
-        if xrandr | grep -q " connected" && ! xrandr | grep -q " disconnected"; then
-            has_display=true
-        fi
-    fi
-
-    local xorg_conf="/etc/X11/xorg.conf"
-    local dummy_backup="${xorg_conf}_bak_dummy"
-
-    if [[ "$has_display" == true ]]; then
-        echo "[*] 检测到物理显示器。"
-        if [[ -f "$dummy_backup" ]]; then
-            echo -e "${YELLOW}[!] 检测到之前使用虚拟显示器。${NC}"
-            read -p "[?] 是否切换回物理显示器？(Y/n): " -n 1 -r
-            echo
-            if [[ $REPLY =~ ^[Yy]$ ]]; then
-                sudo rm -f "$xorg_conf" "$dummy_backup"
-                echo "[+] 已切换回物理显示器模式。"
-            fi
-        else
-            echo "[+] 将共享当前显示器画面。"
-            if [[ -f "$xorg_conf" ]]; then
-                read -p "[?] 存在 xorg.conf，是否删除以避免冲突？(y/N): " -n 1 -r
-                echo
-                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                    sudo rm -f "$xorg_conf"
-                    echo "[+] 已删除 xorg.conf。"
-                fi
-            fi
-        fi
-    else
-        echo "[*] 未检测到显示器（无头模式）。"
-        if ! dpkg -l | grep -q "^ii.*xserver-xorg-video-dummy"; then
-            echo "[*] 安装虚拟显示器驱动..."
-            if ! sudo apt install -y xserver-xorg-core xserver-xorg-video-dummy; then
-                echo "[-] 驱动安装失败。"
-                return 1
-            fi
-        fi
-
-        if [[ -f "$xorg_conf" ]] && [[ ! -f "$dummy_backup" ]]; then
-            sudo cp "$xorg_conf" "${xorg_conf}.orig_$(date +%Y%m%d_%H%M%S)"
-            echo "[*] 原始配置已备份。"
-        fi
-
-        if sudo tee "$xorg_conf" > /dev/null <<EOF
-Section "Device"
-    Identifier  "DummyDevice"
-    Driver      "dummy"
-    Option      "IgnoreEDID" "true"
-EndSection
-
-Section "Monitor"
-    Identifier  "DummyMonitor"
-    HorizSync   28.0-80.0
-    VertRefresh 48.0-75.0
-EndSection
-
-Section "Screen"
-    Identifier  "DummyScreen"
-    Device      "DummyDevice"
-    Monitor     "DummyMonitor"
-    DefaultDepth 24
-    SubSection "Display"
-        Depth   24
-        Modes   "1280x720"
-    EndSubSection
-EndSection
-EOF
-        then
-            sudo touch "$dummy_backup"
-            echo "[+] 虚拟显示器配置已启用。"
-        else
-            echo "[-] 虚拟配置写入失败。"
-            return 1
-        fi
-    fi
-
-    echo -e "${GREEN}[+] x11vnc 配置完成！端口: 5900${NC}"
-    echo "    使用 'sudo systemctl start x11vnc' 可立即启动服务。"
-
-    if [[ "$has_display" == false ]] || [[ -f "$dummy_backup" ]]; then
-        read -p "[?] 为使显示配置生效，建议重启。是否现在重启？(Y/n): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            sudo reboot
-        fi
     fi
 }
 
@@ -417,6 +366,22 @@ switch_vnc_display_mode() {
     if [[ "$mode_choice" != "1" ]]; then
         echo "[*] 已取消。"
         return 0
+    fi
+    
+    # 在这里统一处理虚拟驱动的安装
+
+    if [[ ("$has_display" == false || "$mode_choice" == "1") && (! -f "$dummy_backup" || "$is_dummy_mode" == false) ]]; then
+        if ! dpkg -l | grep -q "^ii.*xserver-xorg-video-dummy"; then
+            echo "[*] 安装虚拟显示器驱动 xserver-xorg-video-dummy..."
+            if sudo apt update && sudo apt install -y xserver-xorg-video-dummy; then # xserver-xorg-core 通常是依赖项
+                 echo "[+] 虚拟显示器驱动安装成功。"
+            else
+                echo "[-] 虚拟显示器驱动安装失败。"
+                return 1
+            fi
+        else
+             echo "[+] 虚拟显示器驱动已安装。"
+        fi
     fi
 
     if [[ "$has_display" == false ]] || [[ "$mode_choice" == "1" ]]; then
