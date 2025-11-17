@@ -1,0 +1,516 @@
+#!/bin/bash
+
+# main.sh - Kali Linux 树莓派脚本 v0.2.3 (开发版 - SSH 增强)
+# 作者 lhl77
+# GitHub 仓库: https://github.com/lhl77/kali-raspi-tool
+# 修改说明: 添加了 SSH 启用/禁用/状态查看功能 (新增功能 2.2)，并优化为自动安装 SSH 服务
+
+set -e
+
+# 颜色定义
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# 脚本版本
+SCRIPT_VERSION="v0.2.3"
+
+check_privileges() {
+  if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
+    echo "[-] 错误：此脚本需要 root 权限或有效的 sudo 配置。"
+    exit 1
+  fi
+  if [[ $EUID -ne 0 ]]; then
+     echo "[*] 测试 sudo 权限..."
+     sudo -l &>/dev/null || { echo "[-] sudo 权限测试失败。"; exit 1; }
+     echo "[+] sudo 权限可用。"
+  fi
+}
+
+# 检查系统版本
+check_system_version() {
+    # 尝试从 /etc/os-release 获取信息
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        if [[ "$NAME" == "Kali GNU/Linux" ]]; then
+            SYSTEM_NAME="Kali"
+            SYSTEM_VERSION="$VERSION_ID"
+            IS_KALI=1
+        else
+            SYSTEM_NAME="$NAME"
+            SYSTEM_VERSION="$VERSION_ID"
+            IS_KALI=0
+        fi
+    # 如果 /etc/os-release 不存在，尝试其他方法
+    elif command -v lsb_release &> /dev/null; then
+        if [[ $(lsb_release -i | cut -f2) == "Kali"* ]]; then
+            SYSTEM_NAME="Kali"
+            SYSTEM_VERSION=$(lsb_release -r | cut -f2)
+            IS_KALI=1
+        else
+            SYSTEM_NAME=$(lsb_release -i | cut -f2)
+            SYSTEM_VERSION=$(lsb_release -r | cut -f2)
+            IS_KALI=0
+        fi
+    # 最后尝试检查 /etc/debian_version (Kali 基于 Debian)
+    elif [ -f /etc/debian_version ]; then
+        # 这种方法不够精确，仅作为后备
+        if grep -q "kali" /etc/debian_version 2>/dev/null; then
+            SYSTEM_NAME="Kali"
+            SYSTEM_VERSION="Unknown (from /etc/debian_version)"
+            IS_KALI=1
+        else
+            SYSTEM_NAME="Debian-based (Unknown)"
+            SYSTEM_VERSION="Unknown"
+            IS_KALI=0
+        fi
+    else
+        SYSTEM_NAME="Unknown"
+        SYSTEM_VERSION="Unknown"
+        IS_KALI=0
+    fi
+}
+
+# 显示系统检查结果的横幅
+show_banner() {
+    if [ "$IS_KALI" -eq 1 ]; then
+        echo -e "${GREEN}==================================${NC}"
+        echo -e "${GREEN}  检测到系统: $SYSTEM_NAME $SYSTEM_VERSION${NC}"
+        echo -e "${GREEN}  脚本版本: $SCRIPT_VERSION${NC}"
+        echo -e "${GREEN}==================================${NC}"
+    else
+        echo -e "${RED}==================================${NC}"
+        echo -e "${RED}  警告: 此脚本为 Kali Linux 设计${NC}"
+        echo -e "${RED}  检测到系统: $SYSTEM_NAME $SYSTEM_VERSION${NC}"
+        echo -e "${RED}  脚本版本: $SCRIPT_VERSION${NC}"
+        echo -e "${RED}==================================${NC}"
+    fi
+    echo ""
+}
+
+show_main_menu() {
+    clear
+    show_banner # 显示系统/版本横幅
+    echo "=================================="
+    echo "     树莓派 Kali Linux 工具箱 $SCRIPT_VERSION"
+    echo "=================================="
+    echo "分类菜单："
+    echo "1) 系统设置"
+    echo "2) 远程访问"
+    echo "3) 更新脚本 (来自 GitHub: lhl77/kali-raspi-tool)"
+    echo "0) 退出"
+    echo "----------------------------------"
+    read -p "请选择分类 (0-3): " main_choice
+}
+
+show_system_menu() {
+    clear
+    show_banner # 显示系统/版本横幅
+    echo "=================================="
+    echo "         系统设置"
+    echo "=================================="
+    echo "1) 1.1 - 系统汉化（设置为简体中文）"
+    echo "0) 返回主菜单"
+    echo "----------------------------------"
+    read -p "请选择功能 (0, 1): " system_choice
+}
+
+show_remote_menu() {
+    clear
+    show_banner # 显示系统/版本横幅
+    echo "=================================="
+    echo "         远程访问"
+    echo "=================================="
+    echo "1) 2.1 - 配置 x11vnc VNC 服务 (推荐)"
+    # --- 新增 SSH 功能选项 ---
+    echo "2) 2.2 - SSH 访问控制 (启用/禁用/状态)"
+    # --------------------------
+    echo "0) 返回主菜单"
+    echo "----------------------------------"
+    read -p "请选择功能 (0, 1, 2): " remote_choice
+}
+
+perform_chinese_setup() {
+    echo "[*] 开始执行汉化操作..."
+
+    if [ -f /etc/default/locale ]; then
+        sudo cp /etc/default/locale /etc/default/locale.bak_$(date +%Y%m%d_%H%M%S)
+        echo "[*] 已备份 /etc/default/locale"
+    fi
+
+    echo "[*] 设置 LANG 和 LC_ALL 为 zh_CN.UTF-8"
+    sudo tee /etc/default/locale > /dev/null <<EOF
+LANG=zh_CN.UTF-8
+LC_ALL=zh_CN.UTF-8
+EOF
+
+    echo "[*] 正在更新软件包列表..."
+    if ! sudo apt update -y; then
+       echo "[-] 软件包列表更新失败。"
+       return 1
+    fi
+
+    echo "[*] 正在安装 locales-all（包含中文语言环境）..."
+    if ! sudo apt install -y locales-all; then
+        echo "[-] locales-all 安装失败。"
+        return 1
+    fi
+
+    echo "[*] 正在生成 zh_CN.UTF-8 locale..."
+    if ! sudo locale-gen zh_CN.UTF-8; then
+        echo "[-] zh_CN.UTF-8 locale 生成失败。"
+    fi
+
+    if locale -a | grep -q "^zh_CN\.utf8$"; then
+        echo "[+] 汉化配置成功！"
+        echo "[!] 请重新登录或重启系统以使更改生效。"
+    else
+        echo "[-] 警告：zh_CN.UTF-8 可能未正确生成或列出。"
+        echo "    建议手动运行：sudo dpkg-reconfigure locales"
+    fi
+
+    local REPLY
+    read -p "[?] 是否安装文泉驿微米黑字体以更好显示中文？(按 Y 确认, 其他键跳过): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        echo "[*] 正在安装 fonts-wqy-microhei..."
+        if sudo apt install -y fonts-wqy-microhei; then
+            echo "[+] 中文字体已安装。"
+        else
+            echo "[-] 中文字体安装失败。"
+        fi
+    else
+        echo "[*] 已跳过中文字体安装。"
+    fi
+}
+
+perform_x11vnc_setup() {
+    echo "[*] 开始配置 x11vnc VNC 服务..."
+
+    echo "[*] 正在安装 x11vnc..."
+    if ! sudo apt install -y x11vnc; then
+        echo "[-] x11vnc 安装失败。"
+        return 1
+    fi
+
+    echo "[*] 设置 VNC 密码。"
+    echo "    请输入 VNC 连接密码 (最长8位字符，区分大小写):"
+    sudo x11vnc -storepasswd
+
+    local service_file="/lib/systemd/system/x11vnc.service"
+    if sudo tee "$service_file" > /dev/null <<EOF
+[Unit]
+Description=Start x11vnc at startup.
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/x11vnc -auth guess -nap -forever -loop -repeat -rfbauth /root/.vnc/passwd -rfbport 5900
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    then
+        echo "[+] x11vnc 服务配置文件已创建: $service_file"
+    else
+        echo "[-] 创建 x11vnc 服务配置文件失败。"
+        return 1
+    fi
+
+    echo "[*] 重新加载 systemd 配置并启用 x11vnc 服务..."
+    sudo systemctl daemon-reload
+    sudo systemctl enable x11vnc.service
+
+    echo "[*] 检查是否连接了外部显示器..."
+    if xrandr | grep -q " connected"; then
+        echo "[*] 检测到外部显示器连接。x11vnc 将共享现有显示器画面。"
+        echo "[*] 配置完成。x11vnc 服务将在下次启动时自动运行。"
+        echo "[!] 您可以立即使用 'sudo systemctl start x11vnc' 来启动服务测试。"
+    else
+        echo "[*] 未检测到外部显示器。将配置虚拟显示器以支持无头 VNC。"
+        echo "[!] 注意：配置虚拟显示器需要重启系统。"
+
+        echo "[*] 正在安装虚拟显示器所需包 (xserver-xorg-core, xserver-xorg-video-dummy)..."
+        if ! sudo apt install -y xserver-xorg-core xserver-xorg-video-dummy; then
+            echo "[-] 安装虚拟显示器包失败。"
+            return 1
+        fi
+
+        local xorg_conf="/etc/X11/xorg.conf"
+        if [ -f "$xorg_conf" ]; then
+            echo "[*] 备份现有 X11 配置文件..."
+            sudo cp "$xorg_conf" "$xorg_conf.bak_$(date +%Y%m%d_%H%M%S)"
+        fi
+
+        echo "[*] 创建虚拟显示器 X11 配置文件..."
+        if sudo tee "$xorg_conf" > /dev/null <<EOF
+Section "Device"
+    Identifier  "Configured Video Device"
+    Driver      "dummy"
+EndSection
+
+Section "Monitor"
+    Identifier  "Configured Monitor"
+    HorizSync 31.5-48.5
+    VertRefresh 50-70
+EndSection
+
+Section "Screen"
+    Identifier  "Default Screen"
+    Monitor     "Configured Monitor"
+    Device      "Configured Video Device"
+    DefaultDepth 24
+    SubSection "Display"
+    Depth 24
+    Modes "1280x720"
+    EndSubSection
+EndSection
+EOF
+        then
+            echo "[+] 虚拟显示器 X11 配置文件已创建/修改: $xorg_conf"
+            echo "[+] 配置完成。"
+            local REPLY
+            read -p "[?] 是否现在重启系统以应用虚拟显示器配置？(按 Y 确认, 其他键跳过): " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                echo "[*] 正在重启系统..."
+                sudo reboot
+            else
+                echo "[*] 请在方便时手动执行 'sudo reboot' 以应用配置。"
+            fi
+        else
+            echo "[-] 创建 X11 配置文件失败。"
+            return 1
+        fi
+    fi
+}
+
+# --- 新增并完善的 SSH 控制功能函数 ---
+perform_ssh_control() {
+    echo "[*] SSH 访问控制功能"
+
+    # 1. 检查 openssh-server 是否安装
+    if ! dpkg -l | grep -q "^ii.*openssh-server"; then
+        echo -e "${YELLOW}[!] 检测到未安装 openssh-server 包。${NC}"
+        read -p "[?] 是否现在安装 openssh-server? (按 Y 确认, 其他键跳过): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            echo "[*] 正在安装 openssh-server..."
+            if sudo apt update && sudo apt install -y openssh-server; then
+                echo -e "${GREEN}[+] openssh-server 安装成功。${NC}"
+            else
+                echo -e "${RED}[-] openssh-server 安装失败。${NC}"
+                return 1 # 安装失败则退出函数
+            fi
+        else
+            echo "[*] 已跳过安装。部分功能可能受限。"
+        fi
+    else
+        echo -e "${GREEN}[+] 检测到已安装 openssh-server 包。${NC}"
+    fi
+
+    # 2. 检查 ssh 服务状态 (即使未安装也可能有残留状态)
+    local ssh_service_status
+    ssh_service_status=$(systemctl is-active ssh 2>/dev/null || echo "unknown")
+
+    echo "    当前 SSH 服务状态:"
+    if [[ "$ssh_service_status" == "active" ]]; then
+        echo -e "    ${GREEN}● ssh.service - OpenBSD Secure Shell server (Active: active (running))${NC}"
+    elif [[ "$ssh_service_status" == "inactive" ]]; then
+        echo -e "    ${YELLOW}● ssh.service - OpenBSD Secure Shell server (Active: inactive (dead))${NC}"
+    else
+        echo -e "    ${YELLOW}● ssh.service - OpenBSD Secure Shell server (状态: 未知或未找到)${NC}"
+    fi
+
+    echo ""
+    echo "选项:"
+    echo "1) 启用并启动 SSH 服务"
+    echo "2) 停止并禁用 SSH 服务"
+    echo "3) 查看 SSH 服务详细状态"
+    echo "0) 返回上一级菜单"
+    echo "----------------------------------"
+    read -p "请选择操作 (0-3): " ssh_action
+
+    case "$ssh_action" in
+        1)
+            echo "[*] 正在启用并启动 SSH 服务..."
+            if sudo systemctl enable ssh --now; then
+                 echo -e "${GREEN}[+] SSH 服务已启用并启动。${NC}"
+                 # 获取 IP 地址提示用户
+                 local ip_addresses
+                 ip_addresses=$(hostname -I 2>/dev/null || echo "")
+                 if [[ -n "$ip_addresses" ]]; then
+                     echo "[*] 您可以通过以下地址之一连接到此设备的 SSH:"
+                     for ip in $ip_addresses; do
+                         echo "    ssh kali@$ip"
+                     done
+                 else
+                      echo "[*] 请使用 'ifconfig' 或 'ip addr' 命令查找本机IP地址。"
+                 fi
+                 echo "[!] 默认用户名通常是 'kali'，密码为您设置的密码。"
+            else
+                 echo -e "${RED}[-] 启用或启动 SSH 服务失败。${NC}"
+            fi
+            ;;
+        2)
+             echo "[*] 正在停止并禁用 SSH 服务..."
+             if sudo systemctl disable ssh --now; then
+                  echo -e "${GREEN}[+] SSH 服务已停止并禁用。${NC}"
+             else
+                  echo -e "${RED}[-] 停止或禁用 SSH 服务失败。${NC}"
+             fi
+             ;;
+        3)
+             echo "[*] 正在显示 SSH 服务详细状态..."
+             echo "----------------------------------"
+             sudo systemctl status ssh --no-pager || echo "无法获取 SSH 服务状态。"
+             echo "----------------------------------"
+             ;;
+        0)
+             echo "[*] 返回远程访问菜单。"
+             return 0
+             ;;
+        *)
+             echo -e "${RED}[-] 无效选项: $ssh_action${NC}"
+             sleep 1
+             ;;
+    esac
+}
+# ----------------------------
+
+# 更新脚本功能
+perform_script_update() {
+    local repo_owner="lhl77"
+    local repo_name="kali-raspi-tool"
+    local script_name="main.sh"
+    local raw_url="https://raw.githubusercontent.com/$repo_owner/$repo_name/main/$script_name"
+
+    echo "[*] 正在从 GitHub ($repo_owner/$repo_name) 检查更新..."
+    echo "[*] 当前脚本版本: $SCRIPT_VERSION"
+
+    # 尝试下载最新脚本内容到临时文件
+    local temp_script=$(mktemp)
+    if curl -s -o "$temp_script" "$raw_url"; then
+        # 检查下载的文件是否包含脚本标识，以验证下载是否成功
+        if grep -q "Kali Linux 树莓派脚本" "$temp_script"; then
+            echo "[*] 找到新版本脚本。"
+
+            # 读取远程脚本的版本号（通过查找包含 "脚本版本" 的行）
+            # 这里假设远程脚本版本号格式与本地一致
+            local remote_version_line=$(grep -m 1 "脚本版本" "$temp_script" | head -n 1)
+            if [[ -n "$remote_version_line" ]]; then
+                # 提取版本号，例如从 "脚本版本 v2.1" 中提取 v2.1
+                # 改进正则以匹配 v0.x.x 格式
+                local remote_version=$(echo "$remote_version_line" | grep -oE 'v[0-9]+\.[0-9]+\.?[0-9]*')
+                echo "[*] 远程脚本版本: $remote_version"
+
+                if [[ "$remote_version" != "$SCRIPT_VERSION" ]]; then
+                    echo -e "${YELLOW}[*] 发现新版本: $remote_version${NC}"
+                    local REPLY
+                    read -p "[?] 是否更新当前脚本 (当前版本: $SCRIPT_VERSION)？(按 Y 确认, 其他键跳过): " -n 1 -r
+                    echo
+                    if [[ $REPLY =~ ^[Yy]$ ]]; then
+                        # 将临时文件移动到当前脚本位置，覆盖原脚本
+                        local current_script_path="$0"
+                        if mv "$temp_script" "$current_script_path"; then
+                            chmod +x "$current_script_path"
+                            echo -e "${GREEN}[+] 脚本更新成功！新版本: $remote_version${NC}"
+                            echo "[*] 请重新运行脚本以应用更新。"
+                            # 询问用户是否立即退出以便重新运行
+                            read -p "[?] 是否现在退出脚本以便重新运行？(按 Y 确认, 其他键继续): " -n 1 -r
+                            echo
+                            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                                exit 0
+                            fi
+                        else
+                            echo "[-] 覆盖脚本文件失败。"
+                            rm -f "$temp_script" # 清理临时文件
+                        fi
+                    else
+                        echo "[*] 已跳过脚本更新。"
+                        rm -f "$temp_script" # 清理临时文件
+                    fi
+                else
+                    echo "[*] 当前已是最新版本。"
+                    rm -f "$temp_script" # 清理临时文件
+                fi
+            else
+                echo "[-] 无法从远程脚本中解析版本号。"
+                rm -f "$temp_script" # 清理临时文件
+            fi
+        else
+            echo "[-] 下载的文件似乎不是有效的脚本。"
+            rm -f "$temp_script" # 清理临时文件
+        fi
+    else
+        echo "[-] 无法从 GitHub 下载脚本。请检查网络连接。"
+        rm -f "$temp_script" # 清理临时文件
+    fi
+}
+
+# --- 主程序入口 ---
+check_privileges
+check_system_version
+
+# 主循环
+while true; do
+    show_main_menu
+    case "$main_choice" in
+        1)
+            while true; do
+                show_system_menu
+                case "$system_choice" in
+                    1)
+                        perform_chinese_setup
+                        read -p "按回车键返回系统设置菜单..."
+                        ;;
+                    0)
+                        break
+                        ;;
+                    *)
+                        echo "[-] 无效选项: $system_choice"
+                        sleep 1
+                        ;;
+                esac
+            done
+            ;;
+        2)
+            while true; do
+                show_remote_menu
+                case "$remote_choice" in
+                    1)
+                        perform_x11vnc_setup
+                        read -p "按回车键返回远程访问菜单..."
+                        ;;
+                    # --- 新增 SSH 功能分支 ---
+                    2)
+                        perform_ssh_control
+                        read -p "按回车键返回远程访问菜单..."
+                        ;;
+                    # --------------------------
+                    0)
+                        break
+                        ;;
+                    *)
+                        echo "[-] 无效选项: $remote_choice"
+                        sleep 1
+                        ;;
+                esac
+            done
+            ;;
+        3)
+            perform_script_update
+            read -p "按回车键返回主菜单..."
+            ;;
+        0)
+            echo "[*] 退出脚本。再见！"
+            exit 0
+            ;;
+        *)
+            echo "[-] 无效选项: $main_choice"
+            sleep 1
+            ;;
+    esac
+done
