@@ -746,8 +746,8 @@ perform_script_update() {
     local script_name="kali_raspi.sh"
 
     local urls=(
-        "https://ghproxy.net/https://raw.githubusercontent.com/$repo_owner/$repo_name/main/$script_name"
         "https://raw.githubusercontent.com/$repo_owner/$repo_name/main/$script_name"
+        "https://ghproxy.net/https://raw.githubusercontent.com/$repo_owner/$repo_name/main/$script_name"
     )
 
     echo "[*] 正在检查更新..."
