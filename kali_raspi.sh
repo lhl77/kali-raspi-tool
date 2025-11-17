@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.3.3"
+SCRIPT_VERSION="v0.3.4"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -128,25 +128,15 @@ show_remote_menu() {
 }
 
 show_hardware_menu() {
-
     clear
-
     show_banner
-
     echo "=================================="
-
     echo "         硬件驱动"
-
     echo "=================================="
-
-    echo "1) 3.1 - 安装 0.91英寸 OLED 屏幕驱动"
-
+    echo "1) 3.1 - 0.91英寸 OLED I2C 屏幕驱动 + 监控脚本"
     echo "0) 返回主菜单"
-
     echo "----------------------------------"
-
     read -p "请选择功能 (0-1): " hardware_choice
-
 }
 
 perform_chinese_setup() {
@@ -583,7 +573,55 @@ install_kali_full() {
     fi
 }
 
-install_oled_driver() {
+manage_oled091_driver() {
+    local install_dir="/usr/share/raspi-oled-091"
+    local status="未安装"
+    local action_prompt=""
+
+    # 判断安装状态
+    if [[ -d "$install_dir" ]] && [[ -f "$install_dir/main.py" ]]; then
+        status="已安装"
+        action_prompt="卸载"
+    else
+        status="未安装"
+        action_prompt="安装"
+    fi
+
+    clear
+    show_banner
+    echo "=================================="
+    echo "   0.91英寸 OLED 屏幕驱动管理"
+    echo "=================================="
+    echo "当前状态: $status"
+    echo "----------------------------------"
+    echo "1) $action_prompt 驱动"
+    # 可以添加更多选项，比如 "查看日志", "手动启动/停止" 等
+    echo "0) 返回上一级菜单"
+    echo "----------------------------------"
+    read -p "请选择操作 (0-1): " manage_choice
+
+    case "$manage_choice" in
+        1)
+            if [[ "$status" == "未安装" ]]; then
+                echo "[*] 开始安装流程..."
+                do_install_oled091_driver
+            else
+                echo "[*] 开始卸载流程..."
+                do_uninstall_oled091_driver
+            fi
+            read -p "按回车返回..."
+            ;;
+        0)
+            # 返回上级菜单，不需要做任何事
+            ;;
+        *)
+            echo "[-] 无效选项"
+            sleep 1
+            ;;
+    esac
+}
+
+do_install_oled091_driver() {
     echo "[*] 开始安装 0.91英寸 OLED 屏幕驱动..."
 
     local repo_owner="lhl77"
@@ -749,6 +787,59 @@ install_oled_driver() {
     echo "  - 如需卸载，删除 $install_dir 目录和 crontab 中的任务。"
 }
 
+do_uninstall_oled091_driver() {
+    local install_dir="/usr/share/raspi-oled-091"
+    local script_path="${install_dir}/main.py"
+    local crontab_entry="@reboot /usr/bin/python3 $script_path"
+
+    echo "[*] 开始卸载 0.91英寸 OLED 屏幕驱动..."
+
+    # --- 步骤 1: 停止正在运行的相关进程 ---
+    echo "[*] 停止正在运行的 OLED 脚本..."
+    pkill -f "python.*$script_path" 2>/dev/null || true
+    # 如果你想更彻底，也可以 pkill -f "python.*main.py" （但风险稍高）
+
+    # --- 步骤 2: 删除安装目录 ---
+    if [[ -d "$install_dir" ]]; then
+        echo "[*] 删除安装目录 $install_dir..."
+        if sudo rm -rf "$install_dir"; then
+            echo "[+] 安装目录已删除。"
+        else
+            echo "[-] 删除安装目录失败。"
+            # 可以选择在这里 return 1，但通常还是尝试清理其他部分
+        fi
+    else
+        echo "[*] 安装目录不存在。"
+    fi
+
+    # --- 步骤 3: 移除 Crontab 中的开机自启任务 ---
+    echo "[*] 从 Crontab 中移除开机自启任务..."
+    local temp_crontab
+    temp_crontab=$(mktemp)
+
+    # 导出当前用户的 crontab
+    crontab -l > "$temp_crontab" 2>/dev/null || touch "$temp_crontab"
+
+    # 检查是否存在我们的任务条目
+    if grep -qF "$crontab_entry" "$temp_crontab"; then
+        # 存在则过滤掉该行并写回
+        grep -vF "$crontab_entry" "$temp_crontab" | crontab -
+        echo "[+] 开机自启任务已移除。"
+    else
+        echo "[*] Crontab 中未找到相关开机自启任务。"
+    fi
+
+    rm -f "$temp_crontab"
+
+    # --- 步骤 4: (可选) 提示用户卸载 Python 包 ---
+    # 卸载 Adafruit-SSD1306 需要 pip uninstall，但这可能影响其他项目，
+    # 通常不建议在卸载驱动时自动卸载全局包。
+    # echo "[*] 注意：如需卸载 Adafruit-SSD1306 库，请手动运行:"
+    # echo "      sudo pip uninstall Adafruit-SSD1306"
+
+    echo -e "${GREEN}[+] OLED 屏幕驱动卸载完成。${NC}"
+}
+
 perform_script_update() {
     local repo_owner="lhl77"
     local repo_name="kali-raspi-tool"
@@ -875,7 +966,7 @@ while true; do
             while true; do
                 show_hardware_menu
                 case "$hardware_choice" in
-                    1) install_oled_driver; read -p "按回车返回...";;
+                    1) manage_oled091_driver;;
                     0) break;;
                     *) echo "[-] 无效选项"; sleep 1;;
                 esac
