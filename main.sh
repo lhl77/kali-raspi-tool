@@ -15,7 +15,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.2.8"
+SCRIPT_VERSION="v0.2.9"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -167,7 +167,7 @@ EOF
 
     read -p "[?] 是否安装文泉驿微米黑字体？(Y/n): " -n 1 -r
     echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
+    if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z "$REPLY" ]]; then
         echo "[*] 安装 fonts-wqy-microhei..."
         if sudo apt install -y fonts-wqy-microhei; then
             echo "[+] 中文字体已安装。"
@@ -262,7 +262,7 @@ perform_ssh_control() {
         echo -e "${YELLOW}[!] 未安装 openssh-server。${NC}"
         read -p "[?] 是否现在安装？(Y/n): " -n 1 -r
         echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
+        if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z "$REPLY" ]]; then
             if sudo apt update && sudo apt install -y openssh-server; then
                 echo -e "${GREEN}[+] openssh-server 安装成功。${NC}"
             else
@@ -521,7 +521,7 @@ EOF
     echo -e "${YELLOW}[!] 需要重启系统才能生效。${NC}"
     read -p "[?] 是否现在重启？(Y/n): " -n 1 -r
     echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
+    if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z "$REPLY" ]]; then
         sudo reboot
     else
         echo "[*] 请稍后手动执行 'sudo reboot'。"
@@ -542,7 +542,7 @@ install_kali_full() {
 
     # 2. 检查磁盘空间 (可选但推荐)
     # 简单估算，kali-linux-everything 及其依赖可能需要数 GB 空间
-    local required_space_gb=10 # 估算值，可根据需要调整
+    local required_space_gb=15 # 估算值，可根据需要调整
     local available_space_kb
     local available_space_gb
     available_space_kb=$(df / | awk 'NR==2 {print $4}') # 获取根分区可用空间 KB
@@ -559,7 +559,13 @@ install_kali_full() {
         echo -e "${YELLOW}[!] 警告：根分区可用空间可能不足 (~${available_space_gb}GB < ${required_space_gb}GB)。${NC}"
         read -p "[?] 空间可能不足，仍要继续吗? (y/N): " -n 1 -r
         echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            # 只有当用户明确输入 y/Y 时才继续
+            # 如果用户按回车或输入 N/n，则跳过
+            # (逻辑在 if 条件外，所以不需要特别处理回车)
+            # 这里保持原样，因为 [[ $REPLY =~ ^[Yy]$ ]] 只有在 y/Y 时才为真
+            # 回车和 N/n 都会进入 else 分支
+        else
            echo "[*] 已取消安装。"
            return 0
         fi
@@ -667,7 +673,7 @@ perform_script_update() {
                 echo -e "${YELLOW}[*] 发现新版本: $remote_version${NC}"
                 read -p "[?] 是否更新？(Y/n): " -n 1 -r
                 echo
-                if [[ $REPLY =~ ^[Yy]$ ]]; then
+                if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z "$REPLY" ]]; then
                     if mv "$temp_script" "$0"; then
                         chmod +x "$0"
                         echo -e "${GREEN}[+] 更新成功！新版本: $remote_version${NC}"
