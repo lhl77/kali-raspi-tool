@@ -15,7 +15,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.2.9"
+SCRIPT_VERSION="v0.2.10"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -554,22 +554,21 @@ install_kali_full() {
         # 这里使用简单的整数除法 (KB -> GB: 除以 1024^2)
         available_space_gb=$(( available_space_kb / 1024 / 1024 ))
     fi
-    if [[ $available_space_gb -lt $required_space_gb ]]; then
-        echo -e "${YELLOW}[!] 警告：根分区可用空间可能不足 (~${available_space_gb}GB < ${required_space_gb}GB)。${NC}"\
+        if [[ $available_space_gb -lt $required_space_gb ]]; then
+        echo -e "${YELLOW}[!] 警告：根分区可用空间可能不足 (~${available_space_gb}GB < ${required_space_gb}GB)。${NC}"
         read -p "[?] 空间可能不足，仍要继续吗? (y/N): " -n 1 -r
         echo
         # (y/N): N 是大写，为默认值。回车等同于 'N' (即取消)
         if [[ $REPLY =~ ^[Yy]$ ]]; then
-            # 只有当用户明确输入 y/Y 时才继续
-            # 如果用户按回车或输入 N/n，则跳过
-            # (逻辑在 if 条件外，所以不需要特别处理回车)
-            # 这里保持原样，因为 [[ $REPLY =~ ^[Yy]$ ]] 只有在 y/Y 时才为真
-            # 回车和 N/n 都会进入 else 分支
+            # 用户选择继续，什么也不做，让流程自然落到下面的 else
+            : # 空指令占位符
         else
            echo "[*] 已取消安装。"
            return 0
         fi
+        # 注意：这里故意不加 else，而是让流程继续到下面的独立 if 块
     else
+        # 空间充足的情况直接在这里处理
         echo -e "${GREEN}[+] 磁盘空间检查通过 (可用 ~${available_space_gb}GB)${NC}"
     fi
 
