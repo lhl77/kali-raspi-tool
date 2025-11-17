@@ -15,7 +15,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.2.11"
+SCRIPT_VERSION="v0.2.12"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -324,8 +324,19 @@ perform_ssh_control() {
 switch_vnc_display_mode() {
     echo "[*] 切换 VNC 显示模式"
 
-    local xorg_conf="/etc/X11/xorg.conf"
-    local dummy_backup="${xorg_conf}_bak_dummy"
+    # --- 使用 xorg.conf.d 方式 ---
+    local xorg_conf_dir="/etc/X11/xorg.conf.d"
+    local dummy_conf_file="${xorg_conf_dir}/10-dummy.conf"
+    local dummy_backup_marker="${dummy_conf_file}_bak" # 用于标记是否处于虚拟模式
+
+    # 确保 xorg.conf.d 目录存在
+    if [[ ! -d "$xorg_conf_dir" ]]; then
+        echo "[*] 创建 Xorg 配置目录 $xorg_conf_dir..."
+        if ! sudo mkdir -p "$xorg_conf_dir"; then
+            echo "[-] 创建目录 $xorg_conf_dir 失败。"
+            return 1
+        fi
+    fi
 
     local has_display=false
     local xrandr_output
@@ -347,8 +358,9 @@ switch_vnc_display_mode() {
     fi
 
     # --- 虚拟模式状态检测 ---
+    # 关键：通过检查标记文件是否存在来判断是否处于虚拟模式
     local is_dummy_mode=false
-    if [[ -f "$dummy_backup" ]]; then
+    if [[ -f "$dummy_backup_marker" ]]; then
         is_dummy_mode=true
         echo -e "${YELLOW}[!] 当前为虚拟显示器（无头）模式。${NC}"
     else
@@ -363,7 +375,6 @@ switch_vnc_display_mode() {
         echo "1) 切换回物理显示器模式"
     else
         # 不处于虚拟模式时，提供切换到虚拟的选项
-        # 文案可以区分是否有物理显示器，但操作是一样的
         if [[ "$has_display" == true ]]; then
             echo "1) 强制切换到无头模式（忽略物理显示器）"
         else
@@ -380,7 +391,7 @@ switch_vnc_display_mode() {
     fi
 
     # --- 统一处理驱动安装 (仅在需要切入虚拟模式时) ---
-    # 关键修正：只有在不处于虚拟模式时（准备切入），才需要确保驱动安装
+    # 关键：只有在不处于虚拟模式时（准备切入），才需要确保驱动安装
     if [[ "$is_dummy_mode" == false ]]; then
         if ! dpkg -l | grep -q "^ii.*xserver-xorg-video-dummy"; then
             echo "[*] 安装虚拟显示器驱动 xserver-xorg-video-dummy..."
@@ -399,53 +410,55 @@ switch_vnc_display_mode() {
     if [[ "$is_dummy_mode" == true ]]; then
         # --- 操作 1: 切换回物理显示器模式 ---
         echo "[*] 正在切换回物理显示器模式..."
-        sudo rm -f "$xorg_conf" "$dummy_backup"
-        # 注意：这里不恢复 .orig 备份，因为用户可能手动修改过 xorg.conf
-        # 如果需要恢复，逻辑会更复杂（需要追踪哪个是最近的 orig 备份）
+        # 删除虚拟显示器配置文件和标记文件
+        sudo rm -f "$dummy_conf_file" "$dummy_backup_marker"
         echo -e "${GREEN}[+] 已切换回物理显示器模式。请重启生效。${NC}"
 
     else
         # --- 操作 2: 切换到/强制切换到无头模式 ---
         echo "[*] 正在切换到无头模式..."
 
-        # 1. 备份原始配置 (如果存在且尚未备份)
-        if [[ -f "$xorg_conf" ]] && [[ ! -f "${xorg_conf}.orig_"* ]]; then # 更宽松的检查
+        # 1. 备份原始同名配置文件 (如果存在且尚未备份)
+        # 注意：这里只备份同名文件，不备份整个目录
+        if [[ -f "$dummy_conf_file" ]] && [[ ! -f "${dummy_conf_file}.orig"* ]]; then
              local timestamp=$(date +%Y%m%d_%H%M%S)
-             sudo cp "$xorg_conf" "${xorg_conf}.orig_${timestamp}"
-             echo "[*] 原始配置已备份为 ${xorg_conf}.orig_${timestamp}。"
+             sudo cp "$dummy_conf_file" "${dummy_conf_file}.orig_${timestamp}"
+             echo "[*] 原始配置文件已备份为 ${dummy_conf_file}.orig_${timestamp}。"
         fi
 
-        # 2. 写入虚拟显示器配置
-        if sudo tee "$xorg_conf" > /dev/null <<'EOF_XORG_CONF'
-Section "Device"
-    Identifier  "DummyDevice"
-    Driver      "dummy"
-    Option      "IgnoreEDID" "true"
+        # 2. 写入虚拟显示器配置到 /etc/X11/xorg.conf.d/10-dummy.conf
+        # 使用你提供的配置内容
+        if sudo tee "$dummy_conf_file" > /dev/null <<'EOF_DUMMY_CONF'
+Section "Monitor"
+    Identifier "Monitor0"
+    HorizSync 28.0-80.0
+    VertRefresh 48.0-75.0
+    Modeline "1600x900_60.00" 118.25 1600 1696 1856 2112 900 903 908 934 -hsync +vsync
 EndSection
 
-Section "Monitor"
-    Identifier  "DummyMonitor"
-    HorizSync   28.0-80.0
-    VertRefresh 48.0-75.0
+Section "Device"
+    Identifier "Card0"
+    Driver "dummy"
+    VideoRam 256000
 EndSection
 
 Section "Screen"
-    Identifier  "DummyScreen"
-    Device      "DummyDevice"
-    Monitor     "DummyMonitor"
+    Identifier "Screen0"
+    Device "Card0"
+    Monitor "Monitor0"
     DefaultDepth 24
     SubSection "Display"
-        Depth   24
-        Modes   "1280x720"
+        Depth 24
+        Modes "1600x900_60.00"
     EndSubSection
 EndSection
-EOF_XORG_CONF
+EOF_DUMMY_CONF
         then
-            # 3. 创建备份标记文件，表示当前处于虚拟模式
-            sudo touch "$dummy_backup"
-            echo -e "${GREEN}[+] 虚拟显示器已启用。请重启生效。${NC}"
+            # 3. 创建标记文件，表示当前处于虚拟模式
+            sudo touch "$dummy_backup_marker"
+            echo -e "${GREEN}[+] 虚拟显示器已启用 (配置文件: $dummy_conf_file)。请重启生效。${NC}"
         else
-            echo "[-] 配置写入失败。"
+            echo "[-] 虚拟显示器配置写入失败。"
             return 1
         fi
     fi
