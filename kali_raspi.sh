@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.3.2"
+SCRIPT_VERSION="v0.3.3"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -676,18 +676,21 @@ install_oled_driver() {
     fi
     echo "[+] I2C 检测正常。"
 
-        # --- 步骤 6: 升级 pip 并安装 Python 包 ---
+    # --- 步骤 6: 升级 pip 并安装 Python 包 ---
     echo "[*] 升级 pip, setuptools, wheel..."
     # 尝试标准升级
     if ! sudo python3 -m pip install --upgrade pip setuptools wheel; then
         echo "[*] 标准 pip 升级失败，尝试使用 --break-system-packages..."
         # 如果标准升级失败，则尝试带 --break-system-packages 参数
         if ! sudo python3 -m pip install --upgrade --break-system-packages pip setuptools wheel; then
-            echo "[-] pip 升级失败（即使使用 --break-system-packages）。"
-            return 1
+            echo "[-] pip 升级失败（即使使用 --break-system-packages），将继续尝试安装 Adafruit-SSD1306..."
+            # 注意：这里不再 return 1，而是继续向下执行
+        else
+             echo "[+] pip, setuptools, wheel 升级成功（使用 --break-system-packages）。"
         fi
+    else
+        echo "[+] pip, setuptools, wheel 升级成功。"
     fi
-    echo "[+] pip, setuptools, wheel 升级成功。"
 
     echo "[*] 安装 Python 包 Adafruit-SSD1306..."
     if ! sudo pip install Adafruit-SSD1306; then
