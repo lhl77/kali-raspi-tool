@@ -15,7 +15,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.2.6"
+SCRIPT_VERSION="v0.2.7"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -120,7 +120,7 @@ show_remote_menu() {
     echo "=================================="
     echo "1) 2.1 - 配置 x11vnc VNC 服务 (推荐)"
     echo "2) 2.2 - SSH 访问控制 (启用/禁用/状态)"
-    echo "3) 2.3 - 手动切换 VNC 显示模式（有显示器 ↔ 无头）"
+    echo "3) 2.3 - 切换 VNC 显示模式（有显示器 ↔ 无头）"
     echo "0) 返回主菜单"
     echo "----------------------------------"
     read -p "请选择功能 (0, 1, 2, 3): " remote_choice
@@ -321,17 +321,32 @@ perform_ssh_control() {
 }
 
 switch_vnc_display_mode() {
-    echo "[*] 手动切换 VNC 显示模式"
+    echo "[*] 切换 VNC 显示模式"
 
     local xorg_conf="/etc/X11/xorg.conf"
     local dummy_backup="${xorg_conf}_bak_dummy"
 
     local has_display=false
-    if xrandr --query &>/dev/null; then
-        if xrandr | grep -q " connected" && ! xrandr | grep -q " disconnected"; then
+    local xrandr_output
+
+    # 执行一次 xrandr 并捕获输出
+    if xrandr_output=$(xrandr --query 2>/dev/null); then
+        # 检查输出中是否存在带有 " connected " (注意空格) 的行
+        # 这种模式更精确地匹配状态，例如 "HDMI-1 connected primary ..."
+        # 而避免匹配 "DP-1 disconnected"
+        if echo "$xrandr_output" | grep -q " connected "; then
             has_display=true
         fi
+    else
+        # xrandr 命令失败（例如，没有运行 X server）
+        # 可以选择默认为无显示器 (has_display=false) 或其他处理
+        echo "[!] 警告: 无法执行 xrandr 查询显示状态。假设无物理显示器。" >&2
+        # has_display 保持为 false
     fi
+
+# 调试输出 (可选)
+# echo "[DEBUG] xrandr output: $xrandr_output"
+# echo "[DEBUG] has_display: $has_display"
 
     echo ""
     if [[ "$has_display" == true ]]; then
