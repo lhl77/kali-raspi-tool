@@ -751,9 +751,12 @@ perform_script_update() {
     local repo_name="kali-raspi-tool"
     local script_name="kali_raspi.sh"
 
+    # --- 关键修改：为每个请求生成唯一的时间戳 ---
+    local timestamp=$(date +%s%N)  # 使用纳秒级时间戳保证唯一性
+
     local urls=(
-        "https://raw.githubusercontent.com/$repo_owner/$repo_name/main/$script_name"
-        "https://ghproxy.net/https://raw.githubusercontent.com/$repo_owner/$repo_name/main/$script_name"
+        "https://raw.githubusercontent.com/$repo_owner/$repo_name/main/$script_name?_=$timestamp"
+        "https://ghproxy.net/https://raw.githubusercontent.com/$repo_owner/$repo_name/main/$script_name?_=$timestamp"
     )
 
     echo "[*] 正在检查更新..."
@@ -764,14 +767,23 @@ perform_script_update() {
     temp_script=$(mktemp)
 
     for url in "${urls[@]}"; do
-        echo "[*] 尝试从源: $url 下载..."
-        if curl -s -m 15 -o "$temp_script" "$url"; then
+        echo "[*] 尝试从源下载: $url"
+        # --- 增加 curl 参数防止缓存 ---
+        if curl -s -m 15 \
+               --no-cache \          # 禁用缓存（部分实现支持）
+               -H 'Cache-Control: no-cache' \
+               -H 'Pragma: no-cache' \
+               -H "User-Agent: KaliRaspiTool-UpdateChecker/$SCRIPT_VERSION" \
+               -o "$temp_script" "$url"; then
+            # 验证是否是有效的 shell 脚本
             if grep -q "Kali Linux 树莓派脚本" "$temp_script"; then
-                echo "[+] 成功下载脚本。"
+                echo "[+] 成功下载最新脚本。"
                 download_success=1
                 break
             else
-                echo "[-] 下载内容无效。"
+                echo "[-] 下载内容无效（非预期脚本）。"
+                rm -f "$temp_script"
+                temp_script=$(mktemp)  # 重建临时文件用于下一次循环
             fi
         else
             echo "[-] 下载失败或超时。"
@@ -779,14 +791,17 @@ perform_script_update() {
     done
 
     if [[ $download_success -eq 1 ]]; then
+        # 提取远程版本号
         local remote_version_line=$(grep -m 1 '^SCRIPT_VERSION=' "$temp_script")
         local remote_version=""
         if [[ -n "$remote_version_line" ]]; then
-            remote_version=$(echo "$remote_version_line" | sed -n 's/.*SCRIPT_VERSION="\([^"]*\)".*/\1/p')
+            remote_version=$(echo "$remote_version_line" | sed -E 's/.*SCRIPT_VERSION="([^"]*)".*/\1/')
         fi
 
         if [[ -n "$remote_version" ]]; then
             echo "[*] 远程版本: $remote_version"
+
+            # 比较版本号
             local version_list=$(printf '%s\n%s' "$SCRIPT_VERSION" "$remote_version" | sort -V)
             local latest_version=$(echo "$version_list" | tail -n 1)
 
@@ -800,11 +815,11 @@ perform_script_update() {
                         echo -e "${GREEN}[+] 更新成功！新版本: $remote_version${NC}"
                         read -p "[?] 是否退出以便重新运行？(Y/n): " -n 1 -r
                         echo
-                        if [[ $REPLY =~ ^[Yy]$ ]]; then
+                        if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z "$REPLY" ]]; then
                             exit 0
                         fi
                     else
-                        echo "[-] 覆盖失败。"
+                        echo "[-] 覆盖当前脚本失败。"
                         rm -f "$temp_script"
                     fi
                 else
@@ -814,11 +829,11 @@ perform_script_update() {
                 echo -e "${GREEN}[+] 当前已是最新版本。${NC}"
                 rm -f "$temp_script"
             else
-                echo -e "${GREEN}[+] 当前版本较新。${NC}"
+                echo -e "${GREEN}[+] 当前版本($SCRIPT_VERSION) 比远程版本($remote_version) 更新！${NC}"
                 rm -f "$temp_script"
             fi
         else
-            echo "[-] 无法解析远程版本号。"
+            echo "[-] 无法解析远程版本号，请检查远程脚本格式。"
             rm -f "$temp_script"
         fi
     else
