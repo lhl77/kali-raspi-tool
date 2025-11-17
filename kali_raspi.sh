@@ -15,7 +15,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.2.10"
+SCRIPT_VERSION="v0.2.11"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -330,24 +330,14 @@ switch_vnc_display_mode() {
     local has_display=false
     local xrandr_output
 
-    # 执行一次 xrandr 并捕获输出
+    # --- 显示状态检测 ---
     if xrandr_output=$(xrandr --query 2>/dev/null); then
-        # 检查输出中是否存在带有 " connected " (注意空格) 的行
-        # 这种模式更精确地匹配状态，例如 "HDMI-1 connected primary ..."
-        # 而避免匹配 "DP-1 disconnected"
         if echo "$xrandr_output" | grep -q " connected "; then
             has_display=true
         fi
     else
-        # xrandr 命令失败（例如，没有运行 X server）
-        # 可以选择默认为无显示器 (has_display=false) 或其他处理
         echo "[!] 警告: 无法执行 xrandr 查询显示状态。假设无物理显示器。" >&2
-        # has_display 保持为 false
     fi
-
-# 调试输出 (可选)
-# echo "[DEBUG] xrandr output: $xrandr_output"
-# echo "[DEBUG] has_display: $has_display"
 
     echo ""
     if [[ "$has_display" == true ]]; then
@@ -356,6 +346,7 @@ switch_vnc_display_mode() {
         echo -e "${YELLOW}[-] 未检测到物理显示器（无头状态）。${NC}"
     fi
 
+    # --- 虚拟模式状态检测 ---
     local is_dummy_mode=false
     if [[ -f "$dummy_backup" ]]; then
         is_dummy_mode=true
@@ -364,16 +355,20 @@ switch_vnc_display_mode() {
         echo -e "${GREEN}[+] 当前使用物理显示器或默认配置。${NC}"
     fi
 
+    # --- 显示操作选项 ---
     echo ""
     echo "可用操作："
-    if [[ "$has_display" == true && "$is_dummy_mode" == true ]]; then
+    if [[ "$is_dummy_mode" == true ]]; then
+        # 关键修正：只要处于虚拟模式，就提供切回物理的选项
         echo "1) 切换回物理显示器模式"
-    elif [[ "$has_display" == false && "$is_dummy_mode" == false ]]; then
-        echo "1) 切换到无头模式（启用虚拟显示器）"
-    elif [[ "$has_display" == true && "$is_dummy_mode" == false ]]; then
-        echo "1) 强制切换到无头模式（忽略物理显示器）"
-    elif [[ "$has_display" == false && "$is_dummy_mode" == true ]]; then
-        echo "1) 重新应用虚拟显示器配置（修复）"
+    else
+        # 不处于虚拟模式时，提供切换到虚拟的选项
+        # 文案可以区分是否有物理显示器，但操作是一样的
+        if [[ "$has_display" == true ]]; then
+            echo "1) 强制切换到无头模式（忽略物理显示器）"
+        else
+            echo "1) 切换到无头模式（启用虚拟显示器）"
+        fi
     fi
     echo "0) 返回上一级菜单"
     echo "----------------------------------"
@@ -383,13 +378,13 @@ switch_vnc_display_mode() {
         echo "[*] 已取消。"
         return 0
     fi
-    
-    # 在这里统一处理虚拟驱动的安装
 
-    if [[ ("$has_display" == false || "$mode_choice" == "1") && (! -f "$dummy_backup" || "$is_dummy_mode" == false) ]]; then
+    # --- 统一处理驱动安装 (仅在需要切入虚拟模式时) ---
+    # 关键修正：只有在不处于虚拟模式时（准备切入），才需要确保驱动安装
+    if [[ "$is_dummy_mode" == false ]]; then
         if ! dpkg -l | grep -q "^ii.*xserver-xorg-video-dummy"; then
             echo "[*] 安装虚拟显示器驱动 xserver-xorg-video-dummy..."
-            if sudo apt update && sudo apt install -y xserver-xorg-video-dummy; then # xserver-xorg-core 通常是依赖项
+            if sudo apt update && sudo apt install -y xserver-xorg-video-dummy; then
                  echo "[+] 虚拟显示器驱动安装成功。"
             else
                 echo "[-] 虚拟显示器驱动安装失败。"
@@ -398,28 +393,30 @@ switch_vnc_display_mode() {
         else
              echo "[+] 虚拟显示器驱动已安装。"
         fi
-    fi
+    fi # 如果已经是虚拟模式，则无需检查/安装驱动
 
-    if [[ "$has_display" == false ]] || [[ "$mode_choice" == "1" ]]; then
-        if ! dpkg -l | grep -q "^ii.*xserver-xorg-video-dummy"; then
-            echo "[*] 安装虚拟显示器驱动..."
-            if ! sudo apt update && sudo apt install -y xserver-xorg-core xserver-xorg-video-dummy; then
-                echo "[-] 驱动安装失败。"
-                return 1
-            fi
-        fi
-    fi
-
-    if [[ "$has_display" == true && "$is_dummy_mode" == true ]]; then
+    # --- 执行操作 ---
+    if [[ "$is_dummy_mode" == true ]]; then
+        # --- 操作 1: 切换回物理显示器模式 ---
+        echo "[*] 正在切换回物理显示器模式..."
         sudo rm -f "$xorg_conf" "$dummy_backup"
-        echo -e "${GREEN}[+] 已切换回物理显示器模式。${NC}"
+        # 注意：这里不恢复 .orig 备份，因为用户可能手动修改过 xorg.conf
+        # 如果需要恢复，逻辑会更复杂（需要追踪哪个是最近的 orig 备份）
+        echo -e "${GREEN}[+] 已切换回物理显示器模式。请重启生效。${NC}"
 
-    elif [[ "$has_display" == false && "$is_dummy_mode" == false ]]; then
-        if [[ -f "$xorg_conf" ]] && [[ ! -f "$dummy_backup" ]]; then
-            sudo cp "$xorg_conf" "${xorg_conf}.orig_$(date +%Y%m%d_%H%M%S)"
-            echo "[*] 原始配置已备份。"
+    else
+        # --- 操作 2: 切换到/强制切换到无头模式 ---
+        echo "[*] 正在切换到无头模式..."
+
+        # 1. 备份原始配置 (如果存在且尚未备份)
+        if [[ -f "$xorg_conf" ]] && [[ ! -f "${xorg_conf}.orig_"* ]]; then # 更宽松的检查
+             local timestamp=$(date +%Y%m%d_%H%M%S)
+             sudo cp "$xorg_conf" "${xorg_conf}.orig_${timestamp}"
+             echo "[*] 原始配置已备份为 ${xorg_conf}.orig_${timestamp}。"
         fi
-        if sudo tee "$xorg_conf" > /dev/null <<EOF
+
+        # 2. 写入虚拟显示器配置
+        if sudo tee "$xorg_conf" > /dev/null <<'EOF_XORG_CONF'
 Section "Device"
     Identifier  "DummyDevice"
     Driver      "dummy"
@@ -442,83 +439,19 @@ Section "Screen"
         Modes   "1280x720"
     EndSubSection
 EndSection
-EOF
+EOF_XORG_CONF
         then
+            # 3. 创建备份标记文件，表示当前处于虚拟模式
             sudo touch "$dummy_backup"
-            echo -e "${GREEN}[+] 虚拟显示器已启用。${NC}"
+            echo -e "${GREEN}[+] 虚拟显示器已启用。请重启生效。${NC}"
         else
             echo "[-] 配置写入失败。"
             return 1
         fi
-
-    elif [[ "$has_display" == true && "$is_dummy_mode" == false ]]; then
-        if sudo tee "$xorg_conf" > /dev/null <<EOF
-Section "Device"
-    Identifier  "DummyDevice"
-    Driver      "dummy"
-    Option      "IgnoreEDID" "true"
-EndSection
-
-Section "Monitor"
-    Identifier  "DummyMonitor"
-    HorizSync   28.0-80.0
-    VertRefresh 48.0-75.0
-EndSection
-
-Section "Screen"
-    Identifier  "DummyScreen"
-    Device      "DummyDevice"
-    Monitor     "DummyMonitor"
-    DefaultDepth 24
-    SubSection "Display"
-        Depth   24
-        Modes   "1280x720"
-    EndSubSection
-EndSection
-EOF
-        then
-            sudo touch "$dummy_backup"
-            echo -e "${GREEN}[+] 已强制切换到无头模式。${NC}"
-        else
-            echo "[-] 配置失败。"
-            return 1
-        fi
-
-    elif [[ "$has_display" == false && "$is_dummy_mode" == true ]]; then
-        if sudo tee "$xorg_conf" > /dev/null <<EOF
-Section "Device"
-    Identifier  "DummyDevice"
-    Driver      "dummy"
-    Option      "IgnoreEDID" "true"
-EndSection
-
-Section "Monitor"
-    Identifier  "DummyMonitor"
-    HorizSync   28.0-80.0
-    VertRefresh 48.0-75.0
-EndSection
-
-Section "Screen"
-    Identifier  "DummyScreen"
-    Device      "DummyDevice"
-    Monitor     "DummyMonitor"
-    DefaultDepth 24
-    SubSection "Display"
-        Depth   24
-        Modes   "1280x720"
-    EndSubSection
-EndSection
-EOF
-        then
-            sudo touch "$dummy_backup"
-            echo -e "${GREEN}[+] 虚拟显示器配置已修复。${NC}"
-        else
-            echo "[-] 修复失败。"
-            return 1
-        fi
     fi
 
-    echo -e "${YELLOW}[!] 需要重启系统才能生效。${NC}"
+    # --- 重启提示 ---
+    echo -e "${YELLOW}[!] 需要重启系统才能使更改生效。${NC}"
     read -p "[?] 是否现在重启？(Y/n): " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z "$REPLY" ]]; then
