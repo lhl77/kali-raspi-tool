@@ -15,7 +15,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.2.12"
+SCRIPT_VERSION="v0.2.13"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -338,32 +338,51 @@ switch_vnc_display_mode() {
         fi
     fi
 
-    local has_display=false
-    local xrandr_output
-
-    # --- 显示状态检测 ---
-    if xrandr_output=$(xrandr --query 2>/dev/null); then
-        if echo "$xrandr_output" | grep -q " connected "; then
-            has_display=true
-        fi
-    else
-        echo "[!] 警告: 无法执行 xrandr 查询显示状态。假设无物理显示器。" >&2
-    fi
-
-    echo ""
-    if [[ "$has_display" == true ]]; then
-        echo -e "${GREEN}[+] 检测到物理显示器已连接。${NC}"
-    else
-        echo -e "${YELLOW}[-] 未检测到物理显示器（无头状态）。${NC}"
-    fi
-
-    # --- 虚拟模式状态检测 ---
+    # --- 虚拟模式状态检测 (首要依据) ---
     # 关键：通过检查标记文件是否存在来判断是否处于虚拟模式
     local is_dummy_mode=false
     if [[ -f "$dummy_backup_marker" ]]; then
         is_dummy_mode=true
+        # 如果处于虚拟模式，则不必检测物理显示器，因为不会使用它
+        # has_display 的值在此状态下不重要
+    fi
+
+    # --- 物理显示器状态检测 (仅在非虚拟模式下进行有意义的检测) ---
+    local has_display=false
+    if [[ "$is_dummy_mode" == false ]]; then
+        # 只有在非虚拟模式下，检测物理显示器才有意义
+        local xrandr_output
+        # 尝试执行 xrandr，但不因失败而停止脚本或做出强假设
+        if xrandr_output=$(xrandr --query 2>/dev/null); then
+            # 检查输出中是否存在带有 " connected " (注意空格) 的行
+            if echo "$xrandr_output" | grep -q " connected "; then
+                has_display=true
+            fi
+            # 如果 grep 没找到，has_display 保持 false
+        else
+            # xrandr 失败，可能是 X Server 未运行等原因
+            # 我们不假设没有显示器，只是说明无法确定
+            # has_display 保持 false
+            # 可以选择打印一条更中性的消息，或者完全不打印
+            # echo "[!] 提示: 无法确定物理显示器状态 (xrandr 失败)。"
+            # 或者完全静默处理，让用户根据常识判断
+        fi
+    fi # End of physical display check block
+
+    # --- 状态报告 ---
+    echo ""
+    if [[ "$is_dummy_mode" == true ]]; then
         echo -e "${YELLOW}[!] 当前为虚拟显示器（无头）模式。${NC}"
+        # 在虚拟模式下，不强调物理显示器的检测结果
     else
+        # 非虚拟模式下，报告物理显示器状态
+        if [[ "$has_display" == true ]]; then
+            echo -e "${GREEN}[+] 检测到物理显示器已连接。${NC}"
+        else
+            # 这里表示：不在虚拟模式，但没检测到或无法确定物理显示器
+            # 可能是真的没有，也可能是 xrandr 失败了
+            echo -e "${YELLOW}[?] 未检测到物理显示器或状态未知。${NC}"
+        fi
         echo -e "${GREEN}[+] 当前使用物理显示器或默认配置。${NC}"
     fi
 
@@ -375,9 +394,11 @@ switch_vnc_display_mode() {
         echo "1) 切换回物理显示器模式"
     else
         # 不处于虚拟模式时，提供切换到虚拟的选项
+        # 即使 has_display 为 false，也允许切换到虚拟模式作为备用
         if [[ "$has_display" == true ]]; then
             echo "1) 强制切换到无头模式（忽略物理显示器）"
         else
+            # 状态未知或无显示器，选项名称略有不同
             echo "1) 切换到无头模式（启用虚拟显示器）"
         fi
     fi
@@ -419,7 +440,6 @@ switch_vnc_display_mode() {
         echo "[*] 正在切换到无头模式..."
 
         # 1. 备份原始同名配置文件 (如果存在且尚未备份)
-        # 注意：这里只备份同名文件，不备份整个目录
         if [[ -f "$dummy_conf_file" ]] && [[ ! -f "${dummy_conf_file}.orig"* ]]; then
              local timestamp=$(date +%Y%m%d_%H%M%S)
              sudo cp "$dummy_conf_file" "${dummy_conf_file}.orig_${timestamp}"
