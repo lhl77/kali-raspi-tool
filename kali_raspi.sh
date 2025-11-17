@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.3.5"
+SCRIPT_VERSION="v0.3.6"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -628,8 +628,8 @@ do_install_oled091_driver() {
     local repo_name="raspi-oled-091"
     local release_version="v1.0"
     local zip_name="raspi-oled-091.zip"
-    #local install_dir="/usr/share/${repo_name}"
-    local install_dir="/usr/share"
+    local install_dir="/usr/share/${repo_name}"
+    local unzip_dir="/usr/share"
     local script_path="${install_dir}/main.py"
 
     # --- 步骤 1: 检查并创建安装目录 ---
@@ -671,8 +671,8 @@ do_install_oled091_driver() {
     fi
 
     # --- 步骤 3: 解压到目标目录 ---
-    echo "[*] 解压文件到 $install_dir..."
-    if ! sudo unzip -o -q "$temp_zip" -d "$install_dir"; then
+    echo "[*] 解压文件到 $unzip_dir..."
+    if ! sudo unzip -o -q "$temp_zip" -d "$unzip_dir"; then
         echo "[-] 解压失败。"
         rm -f "$temp_zip"
         return 1
@@ -741,29 +741,79 @@ do_install_oled091_driver() {
     fi
     echo "[+] Python 包安装成功。"
 
-    # --- 步骤 7: 配置定时任务 ---
-    echo "[*] 配置开机自启定时任务..."
+        # --- 步骤 7: 配置定时任务 (增强版: 包含 PATH 和 SHELL - 简洁版) ---
+    echo "[*] 配置开机自启定时任务 (包含环境变量)..."
     local crontab_entry="@reboot /usr/bin/python3 $script_path"
+    local env_path="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    local env_shell="SHELL=/bin/bash"
+
     local temp_crontab
     temp_crontab=$(mktemp)
+    local temp_new_crontab
+    temp_new_crontab=$(mktemp)
 
-    # 导出现有定时任务
-    crontab -l > "$temp_crontab" 2>/dev/null || echo "# Created by kali_raspi.sh" > "$temp_crontab"
+    # 尝试导出当前用户的现有 crontab 内容
+    if ! crontab -l > "$temp_crontab" 2>/dev/null; then
+        # 如果没有现有 crontab，则创建一个空文件
+        touch "$temp_crontab"
+    fi
 
-    # 检查是否已存在该任务
-    if ! grep -qF "$crontab_entry" "$temp_crontab"; then
-        echo "$crontab_entry" >> "$temp_crontab"
-        if crontab "$temp_crontab"; then
-            echo "[+] 开机自启任务已添加。"
+    # --- 构建新的 crontab 内容 ---
+    local path_found=0
+    local shell_found=0
+    local task_found=0
+
+    # 逐行读取原 crontab
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # 检查是否已包含所需环境变量和任务 (严格匹配)
+        if [[ "$line" == "$env_path" ]]; then
+            path_found=1
+        elif [[ "$line" == "$env_shell" ]]; then
+            shell_found=1
+        elif [[ "$line" == "$crontab_entry" ]]; then
+            task_found=1
+        fi
+        # 将非环境变量、非任务的行暂存 (保留注释和其他任务)
+        if [[ "$line" != "$env_path" && "$line" != "$env_shell" && "$line" != "$crontab_entry" ]]; then
+             echo "$line" >> "$temp_new_crontab.tmp"
+        fi
+    done < "$temp_crontab"
+
+    # --- 写入新的 crontab 内容 ---
+    # 1. 写入必需的环境变量 (如果缺失)
+    if [[ $path_found -eq 0 ]]; then
+        echo "$env_path" >> "$temp_new_crontab"
+    fi
+    if [[ $shell_found -eq 0 ]]; then
+        echo "$env_shell" >> "$temp_new_crontab"
+    fi
+    # 2. 写入一个空行分隔 (如果添加了环境变量)
+    if [[ $path_found -eq 0 ]] || [[ $shell_found -eq 0 ]]; then
+        echo "" >> "$temp_new_crontab"
+    fi
+    # 3. 写入原始的其他内容 (过滤掉的旧 env/task 行除外)
+    if [[ -f "$temp_new_crontab.tmp" ]]; then
+         cat "$temp_new_crontab.tmp" >> "$temp_new_crontab"
+         rm -f "$temp_new_crontab.tmp"
+    fi
+    # 4. 在末尾添加任务 (如果缺失)
+    if [[ $task_found -eq 0 ]]; then
+        echo "$crontab_entry" >> "$temp_new_crontab"
+    fi
+
+    # --- 安装新的 crontab ---
+    if crontab "$temp_new_crontab"; then
+        if [[ $task_found -eq 0 ]]; then
+            echo "[+] 开机自启任务及环境变量已成功添加到当前用户的 crontab。"
         else
-            echo "[-] 添加定时任务失败。"
-            rm -f "$temp_crontab"
-            return 1
+            echo "[*] 环境变量已确认在 crontab 中，任务条目已存在。"
         fi
     else
-        echo "[*] 开机自启任务已存在。"
+        echo "[-] 更新 crontab 失败。"
     fi
-    rm -f "$temp_crontab"
+
+    # --- 清理 ---
+    rm -f "$temp_crontab" "$temp_new_crontab"
 
     # --- 步骤 8: 立即后台运行一次 ---
     echo "[*] 正在启动 OLED 屏幕..."
@@ -813,30 +863,41 @@ do_uninstall_oled091_driver() {
         echo "[*] 安装目录不存在。"
     fi
 
-    # --- 步骤 3: 移除 Crontab 中的开机自启任务 ---
+        # --- 步骤 3: 移除 Crontab 中的开机自启任务 (保持不变或微调) ---
     echo "[*] 从 Crontab 中移除开机自启任务..."
     local temp_crontab
     temp_crontab=$(mktemp)
+    local temp_new_crontab
+    temp_new_crontab=$(mktemp)
 
-    # 导出当前用户的 crontab
-    crontab -l > "$temp_crontab" 2>/dev/null || touch "$temp_crontab"
+    # 尝试导出当前用户的 crontab
+    if crontab -l > "$temp_crontab" 2>/dev/null; then
+        # 过滤掉我们的任务条目
+        grep -vFx "$crontab_entry" "$temp_crontab" > "$temp_new_crontab" 2>/dev/null || cp "$temp_crontab" "$temp_new_crontab"
 
-    # 检查是否存在我们的任务条目
-    if grep -qF "$crontab_entry" "$temp_crontab"; then
-        # 存在则过滤掉该行并写回
-        grep -vF "$crontab_entry" "$temp_crontab" | crontab -
-        echo "[+] 开机自启任务已移除。"
+        # 检查是否有变化 (即任务是否真的被移除了)
+        if diff "$temp_crontab" "$temp_new_crontab" >/dev/null; then
+            echo "[*] Crontab 中未找到相关开机自启任务。"
+        else
+            # 安装修改后的 crontab
+            if crontab "$temp_new_crontab"; then
+                echo "[+] 开机自启任务已从当前用户的 crontab 中移除。"
+            else
+                echo "[-] 更新 crontab 以移除任务时失败。"
+            fi
+        fi
     else
-        echo "[*] Crontab 中未找到相关开机自启任务。"
+        # 用户可能根本没有 crontab
+        echo "[*] 用户 $(logname 2>/dev/null || whoami) 没有 crontab 或无法访问。"
     fi
 
-    rm -f "$temp_crontab"
+    rm -f "$temp_crontab" "$temp_new_crontab"
 
     # --- 步骤 4: (可选) 提示用户卸载 Python 包 ---
     # 卸载 Adafruit-SSD1306 需要 pip uninstall，但这可能影响其他项目，
     # 通常不建议在卸载驱动时自动卸载全局包。
-    # echo "[*] 注意：如需卸载 Adafruit-SSD1306 库，请手动运行:"
-    # echo "      sudo pip uninstall Adafruit-SSD1306"
+    echo "[*] 注意：如需卸载 Adafruit-SSD1306 库，请手动运行:"
+    echo "      sudo pip uninstall Adafruit-SSD1306"
 
     echo -e "${GREEN}[+] OLED 屏幕驱动卸载完成。${NC}"
 }
