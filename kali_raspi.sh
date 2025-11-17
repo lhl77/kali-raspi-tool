@@ -15,7 +15,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.2.14"
+SCRIPT_VERSION="v0.3.0"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -336,20 +336,19 @@ switch_vnc_display_mode() {
             echo "[-] 创建目录 $xorg_conf_dir 失败。"
             return 1
         fi
-    fi
+        # 注意：这里不需要 fi，因为如果 mkdir 失败，函数会 return；成功则自然继续
+    fi # <--- 这个 fi 正确地结束了 "if [[ ! -d ... ]]" 块
 
     # --- 虚拟模式状态检测 (首要依据) ---
     # 关键：通过检查标记文件是否存在来判断是否处于虚拟模式
     local is_dummy_mode=false
     if [[ -f "$dummy_backup_marker" ]]; then
         is_dummy_mode=true
-        # 如果处于虚拟模式，则不必检测物理显示器，因为不会使用它
-        # has_display 的值在此状态下不重要
     fi
 
     # --- 物理显示器状态检测 (仅在非虚拟模式下进行有意义的检测) ---
     local has_display=false
-    if [[ "$is_dummy_mode" == false ]]; then # <--- Line ~19 or so, starting the conditional block
+    if [[ "$is_dummy_mode" == false ]]; then
         # 只有在非虚拟模式下，检测物理显示器才有意义
         local xrandr_output
         # 尝试执行 xrandr，但不因失败而停止脚本或做出强假设
@@ -358,30 +357,21 @@ switch_vnc_display_mode() {
             if echo "$xrandr_output" | grep -q " connected "; then
                 has_display=true
             fi
-            # 如果 grep 没找到，has_display 保持 false
         else
-            # xrandr 失败，可能是 X Server 未运行等原因
-            # 我们不假设没有显示器，只是说明无法确定
-            # has_display 保持 false
-            # 可以选择打印一条更中性的消息，或者完全不打印
-            # echo "[!] 提示: 无法确定物理显示器状态 (xrandr 失败)。"
-            # 或者完全静默处理，让用户根据常识判断
+            # xrandr 失败，静默处理
+            :
         fi
-        # <--- THIS WAS MISSING: fi to close 'if [[ "$is_dummy_mode" == false ]]; then'
-    fi # <--- This fi now correctly closes the outer if-block started around line 19
+        # <--- 这里不再放 fi，因为它属于下面的 if 块
+    fi # <--- 这个 fi 正确地结束了 "if [[ "$is_dummy_mode" == false ]]; then" 块
 
     # --- 状态报告 ---
     echo ""
     if [[ "$is_dummy_mode" == true ]]; then
         echo -e "${YELLOW}[!] 当前为虚拟显示器（无头）模式。${NC}"
-        # 在虚拟模式下，不强调物理显示器的检测结果
     else
-        # 非虚拟模式下，报告物理显示器状态
         if [[ "$has_display" == true ]]; then
             echo -e "${GREEN}[+] 检测到物理显示器已连接。${NC}"
         else
-            # 这里表示：不在虚拟模式，但没检测到或无法确定物理显示器
-            # 可能是真的没有，也可能是 xrandr 失败了
             echo -e "${YELLOW}[?] 未检测到物理显示器或状态未知。${NC}"
         fi
         echo -e "${GREEN}[+] 当前使用物理显示器或默认配置。${NC}"
@@ -391,15 +381,11 @@ switch_vnc_display_mode() {
     echo ""
     echo "可用操作："
     if [[ "$is_dummy_mode" == true ]]; then
-        # 关键修正：只要处于虚拟模式，就提供切回物理的选项
         echo "1) 切换回物理显示器模式"
     else
-        # 不处于虚拟模式时，提供切换到虚拟的选项
-        # 即使 has_display 为 false，也允许切换到虚拟模式作为备用
         if [[ "$has_display" == true ]]; then
             echo "1) 强制切换到无头模式（忽略物理显示器）"
         else
-            # 状态未知或无显示器，选项名称略有不同
             echo "1) 切换到无头模式（启用虚拟显示器）"
         fi
     fi
@@ -413,7 +399,6 @@ switch_vnc_display_mode() {
     fi
 
     # --- 统一处理驱动安装 (仅在需要切入虚拟模式时) ---
-    # 关键：只有在不处于虚拟模式时（准备切入），才需要确保驱动安装
     if [[ "$is_dummy_mode" == false ]]; then
         if ! dpkg -l | grep -q "^ii.*xserver-xorg-video-dummy"; then
             echo "[*] 安装虚拟显示器驱动 xserver-xorg-video-dummy..."
@@ -426,29 +411,22 @@ switch_vnc_display_mode() {
         else
              echo "[+] 虚拟显示器驱动已安装。"
         fi
-    fi # 如果已经是虚拟模式，则无需检查/安装驱动
+    fi
 
     # --- 执行操作 ---
     if [[ "$is_dummy_mode" == true ]]; then
-        # --- 操作 1: 切换回物理显示器模式 ---
         echo "[*] 正在切换回物理显示器模式..."
-        # 删除虚拟显示器配置文件和标记文件
         sudo rm -f "$dummy_conf_file" "$dummy_backup_marker"
         echo -e "${GREEN}[+] 已切换回物理显示器模式。请重启生效。${NC}"
-
     else
-        # --- 操作 2: 切换到/强制切换到无头模式 ---
         echo "[*] 正在切换到无头模式..."
 
-        # 1. 备份原始同名配置文件 (如果存在且尚未备份)
         if [[ -f "$dummy_conf_file" ]] && [[ ! -f "${dummy_conf_file}.orig"* ]]; then
              local timestamp=$(date +%Y%m%d_%H%M%S)
              sudo cp "$dummy_conf_file" "${dummy_conf_file}.orig_${timestamp}"
              echo "[*] 原始配置文件已备份为 ${dummy_conf_file}.orig_${timestamp}。"
         fi
 
-        # 2. 写入虚拟显示器配置到 /etc/X11/xorg.conf.d/10-dummy.conf
-        # 使用你提供的配置内容
         if sudo tee "$dummy_conf_file" > /dev/null <<'EOF_DUMMY_CONF'
 Section "Monitor"
     Identifier "Monitor0"
@@ -475,7 +453,6 @@ Section "Screen"
 EndSection
 EOF_DUMMY_CONF
         then
-            # 3. 创建标记文件，表示当前处于虚拟模式
             sudo touch "$dummy_backup_marker"
             echo -e "${GREEN}[+] 虚拟显示器已启用 (配置文件: $dummy_conf_file)。请重启生效。${NC}"
         else
@@ -494,6 +471,7 @@ EOF_DUMMY_CONF
         echo "[*] 请稍后手动执行 'sudo reboot'。"
     fi
 }
+
 install_kali_full() {
     echo "[*] Kali Linux 完整工具集安装"
     echo ""
