@@ -4,7 +4,6 @@
 # 作者 lhl77
 # GitHub 仓库: https://github.com/lhl77/kali-raspi-tool
 
-
 set -e
 
 # 颜色定义
@@ -15,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.3.0"
+SCRIPT_VERSION="v0.3.1"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -72,14 +71,14 @@ check_system_version() {
 show_banner() {
     if [ "$IS_KALI" -eq 1 ]; then
         echo -e "${GREEN}==================================${NC}"
-        echo -e "${GREEN}  检测到系统: $SYSTEM_NAME $SYSTEM_VERSION${NC}"
-        echo -e "${GREEN}  脚本版本: $SCRIPT_VERSION${NC}"
+        echo -e "${GREEN}  系统: $SYSTEM_NAME $SYSTEM_VERSION${NC}"
+        #echo -e "${GREEN}  脚本版本: $SCRIPT_VERSION${NC}"
         echo -e "${GREEN}==================================${NC}"
     else
         echo -e "${RED}==================================${NC}"
         echo -e "${RED}  警告: 此脚本为 Kali Linux 设计${NC}"
         echo -e "${RED}  检测到系统: $SYSTEM_NAME $SYSTEM_VERSION${NC}"
-        echo -e "${RED}  脚本版本: $SCRIPT_VERSION${NC}"
+        #echo -e "${RED}  脚本版本: $SCRIPT_VERSION${NC}"
         echo -e "${RED}==================================${NC}"
     fi
     echo ""
@@ -94,7 +93,8 @@ show_main_menu() {
     echo "分类菜单："
     echo "1) Kali Linux系统"
     echo "2) 远程访问"
-    echo "3) 更新脚本 (来自 GitHub: lhl77/kali-raspi-tool)"
+    echo "3) 外设/驱动"
+    echo "4) 更新脚本 (来自 GitHub: lhl77/kali-raspi-tool)"
     echo "0) 退出"
     echo "----------------------------------"
     read -p "请选择分类 (0-3): " main_choice
@@ -125,6 +125,28 @@ show_remote_menu() {
     echo "0) 返回主菜单"
     echo "----------------------------------"
     read -p "请选择功能 (0, 1, 2, 3): " remote_choice
+}
+
+show_hardware_menu() {
+
+    clear
+
+    show_banner
+
+    echo "=================================="
+
+    echo "         硬件驱动"
+
+    echo "=================================="
+
+    echo "1) 3.1 - 安装 0.91英寸 OLED 屏幕驱动"
+
+    echo "0) 返回主菜单"
+
+    echo "----------------------------------"
+
+    read -p "请选择功能 (0-1): " hardware_choice
+
 }
 
 perform_chinese_setup() {
@@ -183,7 +205,7 @@ EOF
 perform_x11vnc_setup() {
     echo "[*] 开始配置 x11vnc VNC 服务..."
 
-    # 1. 安装 x11vnc (如果尚未安装)
+    # 安装 x11vnc
     if ! dpkg -l | grep -q "^ii.*x11vnc"; then
         echo "[*] 安装 x11vnc..."
         if ! sudo apt update; then
@@ -199,14 +221,13 @@ perform_x11vnc_setup() {
         echo "[+] x11vnc 已安装。"
     fi
 
-    # 2. 设置 VNC 密码
+    # 设置 VNC 密码
     echo "[*] 设置 VNC 密码（存储于 /root/.vnc/passwd）："
     sudo x11vnc -storepasswd
 
-    # 3. 创建或覆盖 systemd 服务文件
+    # 创建或覆盖 systemd 服务文件
     local service_file="/lib/systemd/system/x11vnc.service"
     echo "[*] 配置 systemd 服务文件: $service_file"
-    
     # 注意：使用 -auth guess 让 x11vnc 自动寻找合适的认证方式，
     # 这样无论当前是物理显示还是虚拟显示都能适配。
     # -display :0 也可以尝试，但 -auth guess 更通用。
@@ -237,7 +258,7 @@ EOF
     then
         echo "[+] x11vnc 服务配置完成。"
         
-        # 4. 重新加载 systemd 配置并启用服务
+        # 重新加载 systemd 配置并启用服务
         echo "[*] 重新加载 systemd 配置..."
         sudo systemctl daemon-reload
         
@@ -324,7 +345,6 @@ perform_ssh_control() {
 switch_vnc_display_mode() {
     echo "[*] 切换 VNC 显示模式"
 
-    # --- 使用 xorg.conf.d 方式 ---
     local xorg_conf_dir="/etc/X11/xorg.conf.d"
     local dummy_conf_file="${xorg_conf_dir}/10-dummy.conf"
     local dummy_backup_marker="${dummy_conf_file}_bak" # 用于标记是否处于虚拟模式
@@ -336,17 +356,17 @@ switch_vnc_display_mode() {
             echo "[-] 创建目录 $xorg_conf_dir 失败。"
             return 1
         fi
-        # 注意：这里不需要 fi，因为如果 mkdir 失败，函数会 return；成功则自然继续
-    fi # <--- 这个 fi 正确地结束了 "if [[ ! -d ... ]]" 块
+        
+    fi
 
-    # --- 虚拟模式状态检测 (首要依据) ---
+    # 虚拟模式状态检测 (首要依据) 
     # 关键：通过检查标记文件是否存在来判断是否处于虚拟模式
     local is_dummy_mode=false
     if [[ -f "$dummy_backup_marker" ]]; then
         is_dummy_mode=true
     fi
 
-    # --- 物理显示器状态检测 (仅在非虚拟模式下进行有意义的检测) ---
+    # 物理显示器状态检测 (仅在非虚拟模式下进行有意义的检测)
     local has_display=false
     if [[ "$is_dummy_mode" == false ]]; then
         # 只有在非虚拟模式下，检测物理显示器才有意义
@@ -361,10 +381,8 @@ switch_vnc_display_mode() {
             # xrandr 失败，静默处理
             :
         fi
-        # <--- 这里不再放 fi，因为它属于下面的 if 块
-    fi # <--- 这个 fi 正确地结束了 "if [[ "$is_dummy_mode" == false ]]; then" 块
+    fi
 
-    # --- 状态报告 ---
     echo ""
     if [[ "$is_dummy_mode" == true ]]; then
         echo -e "${YELLOW}[!] 当前为虚拟显示器（无头）模式。${NC}"
@@ -398,7 +416,7 @@ switch_vnc_display_mode() {
         return 0
     fi
 
-    # --- 统一处理驱动安装 (仅在需要切入虚拟模式时) ---
+    # 统一处理驱动安装 (仅在需要切入虚拟模式时) 
     if [[ "$is_dummy_mode" == false ]]; then
         if ! dpkg -l | grep -q "^ii.*xserver-xorg-video-dummy"; then
             echo "[*] 安装虚拟显示器驱动 xserver-xorg-video-dummy..."
@@ -413,7 +431,6 @@ switch_vnc_display_mode() {
         fi
     fi
 
-    # --- 执行操作 ---
     if [[ "$is_dummy_mode" == true ]]; then
         echo "[*] 正在切换回物理显示器模式..."
         sudo rm -f "$dummy_conf_file" "$dummy_backup_marker"
@@ -461,7 +478,7 @@ EOF_DUMMY_CONF
         fi
     fi
 
-    # --- 重启提示 ---
+    # 重启提示
     echo -e "${YELLOW}[!] 需要重启系统才能使更改生效。${NC}"
     read -p "[?] 是否现在重启？(Y/n): " -n 1 -r
     echo
@@ -476,7 +493,7 @@ install_kali_full() {
     echo "[*] Kali Linux 完整工具集安装"
     echo ""
 
-    # 1. 检查是否为 Kali 系统
+    # 检查是否为 Kali 系统
     if [ "$IS_KALI" -ne 1 ]; then
         echo -e "${RED}[-] 错误：此功能仅适用于 Kali Linux 系统。${NC}"
         echo -e "${RED}    检测到系统: $SYSTEM_NAME $SYSTEM_VERSION${NC}"
@@ -484,7 +501,7 @@ install_kali_full() {
     fi
     echo -e "${GREEN}[+] 确认为 Kali Linux 系统 ($SYSTEM_VERSION)${NC}"
 
-    # 2. 检查磁盘空间 (可选但推荐)
+    # 检查磁盘空间 (可选但推荐)
     # 简单估算，kali-linux-everything 及其依赖可能需要数 GB 空间
     local required_space_gb=15 # 估算值，可根据需要调整
     local available_space_kb
@@ -510,13 +527,11 @@ install_kali_full() {
            echo "[*] 已取消安装。"
            return 0
         fi
-        # 注意：这里故意不加 else，而是让流程继续到下面的独立 if 块
     else
         # 空间充足的情况直接在这里处理
         echo -e "${GREEN}[+] 磁盘空间检查通过 (可用 ~${available_space_gb}GB)${NC}"
     fi
 
-    # 3. 用户最终确认
     echo ""
     echo -e "${YELLOW}即将安装 'kali-linux-everything' Meta 包。${NC}"
     echo "    这将下载并安装大量的工具和依赖项。"
@@ -566,6 +581,163 @@ install_kali_full() {
         echo "      sudo apt install kali-linux-everything"
         return 1
     fi
+}
+
+install_oled_driver() {
+    echo "[*] 开始安装 0.91英寸 OLED 屏幕驱动..."
+
+    local repo_owner="lhl77"
+    local repo_name="raspi-oled-091"
+    local release_version="v1.0"
+    local zip_name="raspi-oled-091.zip"
+    local install_dir="/usr/share/${repo_name}"
+    local script_path="${install_dir}/main.py"
+
+    # --- 步骤 1: 检查并创建安装目录 ---
+    echo "[*] 创建安装目录 $install_dir..."
+    if ! sudo mkdir -p "$install_dir"; then
+        echo "[-] 创建目录失败。"
+        return 1
+    fi
+
+    # --- 步骤 2: 下载 ZIP 文件 (使用镜像) ---
+    local urls=(
+        "https://ghproxy.net/https://github.com/$repo_owner/$repo_name/releases/download/$release_version/$zip_name"
+        "https://github.com/$repo_owner/$repo_name/releases/download/$release_version/$zip_name"
+    )
+    local download_success=0
+    local temp_zip
+    temp_zip=$(mktemp --suffix=.zip)
+
+    for url in "${urls[@]}"; do
+        echo "[*] 尝试从源下载: $url"
+        if curl -s -m 30 -o "$temp_zip" "$url"; then
+            # 检查文件是否为有效的 ZIP
+            if file "$temp_zip" | grep -q "Zip archive"; then
+                echo "[+] 下载成功。"
+                download_success=1
+                break
+            else
+                echo "[-] 下载内容无效 (非 ZIP 文件)。"
+                rm -f "$temp_zip"
+            fi
+        else
+            echo "[-] 下载失败或超时。"
+        fi
+    done
+
+    if [[ $download_success -ne 1 ]]; then
+        echo "[-] 所有源均下载失败。"
+        return 1
+    fi
+
+    # --- 步骤 3: 解压到目标目录 ---
+    echo "[*] 解压文件到 $install_dir..."
+    if ! sudo unzip -o -q "$temp_zip" -d "$install_dir"; then
+        echo "[-] 解压失败。"
+        rm -f "$temp_zip"
+        return 1
+    fi
+    rm -f "$temp_zip"
+    echo "[+] 文件解压完成。"
+
+    # --- 步骤 4: 安装系统依赖 ---
+    echo "[*] 安装系统依赖 (i2c-tools, python3-smbus)..."
+    # 优先尝试 python3-smbus，如果失败再尝试 python-smbus
+    if ! sudo apt-get install -y i2c-tools python3-smbus; then
+        echo "[*] python3-smbus 安装失败，尝试 python-smbus..."
+        if ! sudo apt-get install -y i2c-tools python-smbus; then
+            # 如果还是失败，尝试使用 --break-system-packages
+            echo "[*] 常规安装失败，尝试使用 --break-system-packages..."
+            if ! sudo apt-get install -y --break-system-packages i2c-tools python3-smbus && \
+               ! sudo apt-get install -y --break-system-packages i2c-tools python-smbus; then
+                echo "[-] 系统依赖安装失败，请手动检查。"
+                return 1
+            fi
+        fi
+    fi
+    echo "[+] 系统依赖安装成功。"
+
+    # --- 步骤 5: 检查 I2C 是否启用 ---
+    echo "[*] 检查 I2C 总线..."
+    if ! i2cdetect -y 1 &>/dev/null; then
+        echo -e "${YELLOW}[!] I2C 可能未启用。${NC}"
+        echo "    请运行 'sudo raspi-config' -> 'Interface Options' -> 'I2C' 启用。"
+        read -p "[?] 是否现在运行 raspi-config? (Y/n): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z "$REPLY" ]]; then
+            sudo raspi-config
+        fi
+        # 再次检查
+        if ! i2cdetect -y 1 &>/dev/null; then
+            echo "[-] I2C 仍未启用，无法继续。"
+            return 1
+        fi
+    fi
+    echo "[+] I2C 检测正常。"
+
+    # --- 步骤 6: 升级 pip 并安装 Python 包 ---
+    echo "[*] 升级 pip, setuptools, wheel..."
+    if ! sudo python3 -m pip install --upgrade pip setuptools wheel; then
+        echo "[-] pip 升级失败。"
+        return 1
+    fi
+
+    echo "[*] 安装 Python 包 Adafruit-SSD1306..."
+    if ! sudo pip install Adafruit-SSD1306; then
+        echo "[*] 标准安装失败，尝试使用 --break-system-packages..."
+        if ! sudo pip install --break-system-packages Adafruit-SSD1306; then
+            echo "[-] Adafruit-SSD1306 安装失败。"
+            return 1
+        fi
+    fi
+    echo "[+] Python 包安装成功。"
+
+    # --- 步骤 7: 配置定时任务 ---
+    echo "[*] 配置开机自启定时任务..."
+    local crontab_entry="@reboot /usr/bin/python3 $script_path"
+    local temp_crontab
+    temp_crontab=$(mktemp)
+
+    # 导出现有定时任务
+    crontab -l > "$temp_crontab" 2>/dev/null || echo "# Created by kali_raspi.sh" > "$temp_crontab"
+
+    # 检查是否已存在该任务
+    if ! grep -qF "$crontab_entry" "$temp_crontab"; then
+        echo "$crontab_entry" >> "$temp_crontab"
+        if crontab "$temp_crontab"; then
+            echo "[+] 开机自启任务已添加。"
+        else
+            echo "[-] 添加定时任务失败。"
+            rm -f "$temp_crontab"
+            return 1
+        fi
+    else
+        echo "[*] 开机自启任务已存在。"
+    fi
+    rm -f "$temp_crontab"
+
+    # --- 步骤 8: 立即后台运行一次 ---
+    echo "[*] 正在启动 OLED 屏幕..."
+    # 先确保没有旧进程
+    pkill -f "python.*$script_path" 2>/dev/null || true
+    # 后台运行
+    nohup /usr/bin/python3 "$script_path" > /dev/null 2>&1 &
+    local pid=$!
+    # 等待几秒看是否启动
+    sleep 3
+    if kill -0 $pid 2>/dev/null; then
+        echo -e "${GREEN}[+] OLED 屏幕驱动安装并启动成功！${NC}"
+        echo "    屏幕应已点亮。脚本将在后台持续运行。"
+    else
+        echo -e "${YELLOW}[!] 警告：脚本启动后可能已退出，检查 /tmp/nohup.out 或日志。${NC}"
+    fi
+
+    echo ""
+    echo "提示："
+    echo "  - 重启后屏幕将自动点亮。"
+    echo "  - 如需停止，运行: pkill -f 'python.*$script_path'"
+    echo "  - 如需卸载，删除 $install_dir 目录和 crontab 中的任务。"
 }
 
 perform_script_update() {
@@ -680,6 +852,16 @@ while true; do
             done
             ;;
         3)
+            while true; do
+                show_hardware_menu
+                case "$hardware_choice" in
+                    1) install_oled_driver; read -p "按回车返回...";;
+                    0) break;;
+                    *) echo "[-] 无效选项"; sleep 1;;
+                esac
+            done
+            ;;
+        4)
             perform_script_update
             read -p "按回车返回主菜单..."
             ;;
