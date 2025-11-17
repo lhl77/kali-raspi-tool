@@ -773,10 +773,6 @@ perform_script_update() {
         echo "[*] 尝试从源下载: $url"
         # --- 增加 curl 参数防止缓存 ---
         if curl -s -m 15 \
-               --no-cache \          # 禁用缓存（部分实现支持）
-               -H 'Cache-Control: no-cache' \
-               -H 'Pragma: no-cache' \
-               -H "User-Agent: KaliRaspiTool-UpdateChecker/$SCRIPT_VERSION" \
                -o "$temp_script" "$url"; then
             # 验证是否是有效的 shell 脚本
             if grep -q "Kali Linux 树莓派脚本" "$temp_script"; then
