@@ -15,7 +15,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.2.13"
+SCRIPT_VERSION="v0.2.14"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -349,7 +349,7 @@ switch_vnc_display_mode() {
 
     # --- 物理显示器状态检测 (仅在非虚拟模式下进行有意义的检测) ---
     local has_display=false
-    if [[ "$is_dummy_mode" == false ]]; then
+    if [[ "$is_dummy_mode" == false ]]; then # <--- Line ~19 or so, starting the conditional block
         # 只有在非虚拟模式下，检测物理显示器才有意义
         local xrandr_output
         # 尝试执行 xrandr，但不因失败而停止脚本或做出强假设
@@ -367,7 +367,8 @@ switch_vnc_display_mode() {
             # echo "[!] 提示: 无法确定物理显示器状态 (xrandr 失败)。"
             # 或者完全静默处理，让用户根据常识判断
         fi
-    fi # End of physical display check block
+        # <--- THIS WAS MISSING: fi to close 'if [[ "$is_dummy_mode" == false ]]; then'
+    fi # <--- This fi now correctly closes the outer if-block started around line 19
 
     # --- 状态报告 ---
     echo ""
@@ -493,7 +494,6 @@ EOF_DUMMY_CONF
         echo "[*] 请稍后手动执行 'sudo reboot'。"
     fi
 }
-
 install_kali_full() {
     echo "[*] Kali Linux 完整工具集安装"
     echo ""
