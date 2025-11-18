@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.3.7"
+SCRIPT_VERSION="v0.3.8"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -903,218 +903,51 @@ do_uninstall_oled091_driver() {
     echo -e "${GREEN}[+] OLED 屏幕驱动卸载完成。${NC}"
 }
 
-do_install_yahboom_fan() {
-    local repo_owner="lhl77"
-    local repo_name="yahboom-raspi-cooling-fan"
-    local release_version="v1.0"
-    local zip_name="yahboom-raspi-fan.zip"
+manage_yahboom_fan() {
     local install_dir="/usr/share/yahboom-raspi-fan"
-    local fan_script="$install_dir/fan_temp.py"
-    local rgb_script="$install_dir/rgb_temp.py"
+    local status="未安装"
+    local action_prompt=""
 
-    # --- 步骤 1: 检查并创建安装目录 ---
-    echo "[*] 创建安装目录 $install_dir..."
-    if ! sudo mkdir -p "$install_dir"; then
-        echo "[-] 创建目录失败。"
-        return 1
-    fi
-
-    # --- 步骤 2: 下载 ZIP 文件 (使用镜像) ---
-    local urls=(
-        "https://ghproxy.net/https://github.com/$repo_owner/$repo_name/releases/download/$release_version/$zip_name"
-        "https://github.com/$repo_owner/$repo_name/releases/download/$release_version/$zip_name"
-    )
-    local download_success=0
-    local temp_zip
-    temp_zip=$(mktemp --suffix=.zip)
-
-    for url in "${urls[@]}"; do
-        echo "[*] 尝试从源下载: $url"
-        if curl -s -m 30 -o "$temp_zip" "$url"; then
-            if file "$temp_zip" | grep -q "Zip archive"; then
-                echo "[+] 下载成功。"
-                download_success=1
-                break
-            else
-                echo "[-] 下载内容无效 (非 ZIP 文件)。"
-                rm -f "$temp_zip"
-            fi
-        else
-            echo "[-] 下载失败或超时。"
-        fi
-    done
-
-    if [[ $download_success -ne 1 ]]; then
-        echo "[-] 所有源均下载失败。"
-        return 1
-    fi
-
-    # --- 步骤 3: 解压到目标目录 ---
-    echo "[*] 解压文件到 $install_dir..."
-    if ! sudo unzip -o -q "$temp_zip" -d "$install_dir"; then
-        echo "[-] 解压失败。"
-        rm -f "$temp_zip"
-        return 1
-    fi
-    rm -f "$temp_zip"
-    echo "[+] 文件解压完成。"
-
-    # --- 步骤 4: 根据系统架构安装依赖 ---
-    echo "[*] 检测系统架构并安装依赖..."
-    local arch=$(uname -m)
-    local deps_installed=0
-
-    if [[ "$arch" == "armv7l" ]]; then
-        # 32位系统
-        echo "[*] 检测到 32位系统 (armv7l)"
-        if sudo pip3 install Adafruit_BBIO Adafruit-SSD1306; then
-            deps_installed=1
-        else
-            echo "[*] pip3 安装失败，尝试使用 --break-system-packages..."
-            if sudo pip3 install --break-system-packages Adafruit_BBIO Adafruit-SSD1306; then
-                deps_installed=1
-            else
-                echo "[-] 32位依赖安装失败。"
-            fi
-        fi
-    elif [[ "$arch" == "aarch64" ]] || [[ "$arch" == "arm64" ]]; then
-        # 64位系统
-        echo "[*] 检测到 64位系统 ($arch)"
-        if sudo apt install -y python3-smbus python3-pip python3-rpi.gpio i2c-tools libraspberrypi-bin; then
-            # 如果 apt 安装成功，再安装 pip 包
-            if sudo pip3 install Adafruit-SSD1306 Pillow; then
-                deps_installed=1
-            else
-                echo "[*] pip3 安装失败，尝试使用 --break-system-packages..."
-                if sudo pip3 install --break-system-packages Adafruit-SSD1306 Pillow; then
-                    deps_installed=1
-                else
-                    echo "[-] 64位 Python 包安装失败。"
-                fi
-            fi
-        else
-            # apt 安装失败，尝试修复
-            echo "[*] apt 安装失败，尝试使用 --fix-broken..."
-            if sudo apt install --fix-broken -y && sudo apt install -y python3-smbus python3-pip python3-rpi.gpio i2c-tools libraspberrypi-bin; then
-                # 再次尝试 pip 安装
-                if sudo pip3 install Adafruit-SSD1306 Pillow; then
-                    deps_installed=1
-                else
-                    echo "[*] pip3 安装失败，尝试使用 --break-system-packages..."
-                    if sudo pip3 install --break-system-packages Adafruit-SSD1306 Pillow; then
-                        deps_installed=1
-                    else
-                        echo "[-] 64位依赖安装失败。"
-                    fi
-                fi
-            else
-                echo "[-] 64位系统依赖安装失败。"
-            fi
-        fi
+    # 判断安装状态
+    if [[ -d "$install_dir" ]] && [[ -f "$install_dir/fan_temp.py" ]] && [[ -f "$install_dir/rgb_temp.py" ]]; then
+        status="已安装"
+        action_prompt="卸载"
     else
-        echo "[-] 不支持的架构: $arch"
-        return 1
+        status="未安装"
+        action_prompt="安装"
     fi
 
-    if [[ $deps_installed -eq 1 ]]; then
-        echo "[+] 依赖安装成功。"
-    else
-        echo "[!] 依赖安装失败，将继续尝试添加开机任务。"
-        # 仍然继续，因为脚本可能已经解压，用户可以手动调试
-    fi
+    clear
+    show_banner
+    echo "=================================="
+    echo "   YAHBOOM HAT RGB温控风扇驱动管理"
+    echo "=================================="
+    echo "当前状态: $status"
+    echo "----------------------------------"
+    echo "1) $action_prompt 驱动"
+    echo "0) 返回上一级菜单"
+    echo "----------------------------------"
+    read -p "请选择操作 (0-1): " fan_choice
 
-    # --- 步骤 5: 检查 I2C ---
-    echo "[*] 检查 I2C 总线..."
-    if ! i2cdetect -y 1 &>/dev/null; then
-        echo -e "${YELLOW}[!] I2C 可能未启用。${NC}"
-        echo "    请运行 'sudo raspi-config' -> 'Interface Options' -> 'I2C' 启用。"
-        read -p "[?] 是否现在运行 raspi-config? (Y/n): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z "$REPLY" ]]; then
-            sudo raspi-config
-        fi
-        if ! i2cdetect -y 1 &>/dev/null; then
-            echo "[-] I2C 仍未启用。"
-            # 不 return，继续尝试
-        fi
-    fi
-    echo "[+] I2C 检测正常。"
-
-    # --- 步骤 6: 配置定时任务 (包含 PATH 和 SHELL) ---
-    echo "[*] 配置开机自启定时任务..."
-    local env_path="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-    local env_shell="SHELL=/bin/bash"
-    local fan_entry="@reboot /usr/bin/python3 $fan_script"
-    local rgb_entry="@reboot /usr/bin/python3 $rgb_script"
-    
-    local temp_crontab
-    temp_crontab=$(mktemp)
-    local temp_new_crontab
-    temp_new_crontab=$(mktemp)
-
-    # 导出现有 crontab
-    if ! crontab -l > "$temp_crontab" 2>/dev/null; then
-        touch "$temp_crontab"
-    fi
-
-    # --- 构建新的 crontab 内容 ---
-    local path_found=0
-    local shell_found=0
-    local fan_task_found=0
-    local rgb_task_found=0
-
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        if [[ "$line" == "$env_path" ]]; then path_found=1
-        elif [[ "$line" == "$env_shell" ]]; then shell_found=1
-        elif [[ "$line" == "$fan_entry" ]]; then fan_task_found=1
-        elif [[ "$line" == "$rgb_entry" ]]; then rgb_task_found=1
-        fi
-        # 保留其他行
-        if [[ "$line" != "$env_path" && "$line" != "$env_shell" && "$line" != "$fan_entry" && "$line" != "$rgb_entry" ]]; then
-            echo "$line" >> "$temp_new_crontab.tmp"
-        fi
-    done < "$temp_crontab"
-
-    # 写入环境变量 (如果缺失)
-    if [[ $path_found -eq 0 ]]; then echo "$env_path" >> "$temp_new_crontab"; fi
-    if [[ $shell_found -eq 0 ]]; then echo "$env_shell" >> "$temp_new_crontab"; fi
-    # 分隔符
-    if [[ $path_found -eq 0 ]] || [[ $shell_found -eq 0 ]]; then echo "" >> "$temp_new_crontab"; fi
-    # 写入原始内容
-    if [[ -f "$temp_new_crontab.tmp" ]]; then cat "$temp_new_crontab.tmp" >> "$temp_new_crontab"; rm -f "$temp_new_crontab.tmp"; fi
-    # 添加新任务 (如果缺失)
-    if [[ $fan_task_found -eq 0 ]]; then echo "$fan_entry" >> "$temp_new_crontab"; fi
-    if [[ $rgb_task_found -eq 0 ]]; then echo "$rgb_entry" >> "$temp_new_crontab"; fi
-
-    # --- 安装 crontab ---
-    if crontab "$temp_new_crontab"; then
-        echo "[+] 开机自启任务已成功添加。"
-    else
-        echo "[-] 添加定时任务失败。"
-        # 不 return，继续
-    fi
-
-    # --- 清理临时文件 ---
-    rm -f "$temp_crontab" "$temp_new_crontab"
-
-    # --- 步骤 7: 立即后台运行一次 ---
-    echo "[*] 正在启动风扇和RGB控制脚本..."
-    pkill -f "python.*$fan_script" 2>/dev/null || true
-    pkill -f "python.*$rgb_script" 2>/dev/null || true
-    nohup /usr/bin/python3 "$fan_script" > /dev/null 2>&1 &
-    nohup /usr/bin/python3 "$rgb_script" > /dev/null 2>&1 &
-    sleep 2
-
-    if pgrep -f "python.*$fan_script" > /dev/null && pgrep -f "python.*$rgb_script" > /dev/null; then
-        echo -e "${GREEN}[+] YAHBOOM 风扇驱动安装并启动成功！${NC}"
-    else
-        echo -e "${YELLOW}[!] 警告：一个或多个脚本可能未能成功启动。${NC}"
-    fi
-
-    echo ""
-    echo "提示："
-    echo "  - 风扇和RGB灯将在下次重启后自动运行。"
-    echo "  - 如需停止，运行: pkill -f 'python.*yahboom-raspi-fan'"
+    case "$fan_choice" in
+        1)
+            if [[ "$status" == "未安装" ]]; then
+                echo "[*] 开始安装 YAHBOOM 风扇驱动..."
+                do_install_yahboom_fan
+            else
+                echo "[*] 开始卸载 YAHBOOM 风扇驱动..."
+                do_uninstall_yahboom_fan
+            fi
+            read -p "按回车返回..."
+            ;;
+        0)
+            # 返回上级菜单
+            ;;
+        *)
+            echo "[-] 无效选项"
+            sleep 1
+            ;;
+    esac
 }
 
 do_install_yahboom_fan() {
