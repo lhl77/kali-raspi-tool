@@ -3,7 +3,6 @@
 # kali_raspi.sh - Kali Linux 树莓派脚本 
 # 作者 lhl77
 # GitHub 仓库: https://github.com/lhl77/kali-raspi-tool
-
 set -e
 
 # 颜色定义
