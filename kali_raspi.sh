@@ -1327,17 +1327,18 @@ perform_script_update() {
 
 manage_clash() {
     # --- 配置变量 ---
+    local clash_base_dir="/opt/clash"
     local repo_url="https://github.com/nelvko/clash-for-linux-install.git"
     local proxy_url="https://gh-proxy.com/$repo_url"
     local branch="feat-init"
-    local clone_dir="/opt/clash-for-linux-install" # 推荐使用 /opt 或 /usr/local
-    local clash_base_dir="/etc/clash"             # 这是 clashctl.sh 中默认的 CLASH_BASE_DIR
-    
-    # --- 检测安装状态 ---
+    local clone_dir="/opt/clash-for-linux-install"
+
+    # --- 检测安装状态 (基于 install.sh 的核心判断逻辑) ---
     local status="未安装"
     local action_prompt=""
-    
-    if [[ -d "$clash_base_dir" ]] && [[ -f "$clone_dir/install.sh" ]]; then
+
+    # *** 核心判断：检查 /opt/clash 目录是否存在 ***
+    if [[ -d "$clash_base_dir" ]]; then
         status="已安装"
         action_prompt="卸载"
     else
@@ -1351,6 +1352,7 @@ manage_clash() {
     echo "       Clash for Linux 管理"
     echo "=================================="
     echo "当前状态: $status"
+    echo "安装目录: $clash_base_dir"
     echo "----------------------------------"
     echo "1) $action_prompt Clash"
     echo "0) 返回上一级菜单"
