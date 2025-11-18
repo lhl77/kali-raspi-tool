@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.4.0"
+SCRIPT_VERSION="v0.4.1"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -1327,17 +1327,17 @@ perform_script_update() {
 
 manage_clash() {
     # --- 配置变量 ---
-    local clash_base_dir="/opt/clash"
+    local clash_base_dir="/opt/clashctl"
     local repo_url="https://github.com/nelvko/clash-for-linux-install.git"
     local proxy_url="https://gh-proxy.com/$repo_url"
     local branch="feat-init"
-    local clone_dir="/opt/clash-for-linux-install"
+    local clone_dir="/opt/clash-for-linux-install" # 工作目录
 
-    # --- 检测安装状态 (基于 install.sh 的核心判断逻辑) ---
+    # --- 检测安装状态 (基于 clashctl.sh 的 CLASH_BASE_DIR) ---
     local status="未安装"
     local action_prompt=""
 
-    # *** 核心判断：检查 /opt/clash 目录是否存在 ***
+    # *** 最终正确的判断依据 ***
     if [[ -d "$clash_base_dir" ]]; then
         status="已安装"
         action_prompt="卸载"
