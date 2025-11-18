@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.3.8"
+SCRIPT_VERSION="v0.4.0"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -91,13 +91,14 @@ show_main_menu() {
     echo "     树莓派 Kali Linux 工具箱 $SCRIPT_VERSION"
     echo "=================================="
     echo "分类菜单："
-    echo "1) Kali Linux系统"
-    echo "2) 远程访问"
+    echo "1) 系统设置"
+    echo "2) SSH/VNC"
     echo "3) 外设/驱动"
-    echo "4) 更新脚本 (来自 GitHub: lhl77/kali-raspi-tool)"
+    echo "4) 必备软件"
+    echo "5) 更新脚本 (来自 GitHub: lhl77/kali-raspi-tool)"
     echo "0) 退出"
     echo "----------------------------------"
-    read -p "请选择分类 (0-4): " main_choice
+    read -p "请选择分类 (0-5): " main_choice
 }
 
 show_system_menu() {
@@ -124,7 +125,7 @@ show_remote_menu() {
     echo "3) 2.3 - 切换 VNC 显示模式（有显示器 ↔ 无头）"
     echo "0) 返回主菜单"
     echo "----------------------------------"
-    read -p "请选择功能 (0, 1, 2, 3): " remote_choice
+    read -p "请选择功能 (0-3): " remote_choice
 }
 
 show_hardware_menu() {
@@ -138,6 +139,18 @@ show_hardware_menu() {
     echo "0) 返回主菜单"
     echo "----------------------------------"
     read -p "请选择功能 (0-2): " hardware_choice
+}
+
+show_application_menu() {
+    clear
+    show_banner
+    echo "=================================="
+    echo "         必备软件"
+    echo "=================================="
+    echo "1) 4.1 - Clash 命令行版本"
+    echo "0) 返回主菜单"
+    echo "----------------------------------"
+    read -p "请选择功能 (0-2): " application_choice
 }
 
 perform_chinese_setup() {
@@ -1312,6 +1325,170 @@ perform_script_update() {
     fi
 }
 
+manage_clash() {
+    # --- 配置变量 ---
+    local repo_url="https://github.com/nelvko/clash-for-linux-install.git"
+    local proxy_url="https://gh-proxy.com/$repo_url"
+    local branch="feat-init"
+    local clone_dir="/opt/clash-for-linux-install" # 推荐使用 /opt 或 /usr/local
+    local clash_base_dir="/etc/clash"             # 这是 clashctl.sh 中默认的 CLASH_BASE_DIR
+    
+    # --- 检测安装状态 ---
+    local status="未安装"
+    local action_prompt=""
+    
+    if [[ -d "$clash_base_dir" ]] && [[ -f "$clone_dir/install.sh" ]]; then
+        status="已安装"
+        action_prompt="卸载"
+    else
+        status="未安装"
+        action_prompt="安装"
+    fi
+
+    clear
+    show_banner
+    echo "=================================="
+    echo "       Clash for Linux 管理"
+    echo "=================================="
+    echo "当前状态: $status"
+    echo "----------------------------------"
+    echo "1) $action_prompt Clash"
+    echo "0) 返回上一级菜单"
+    echo "----------------------------------"
+    read -p "请选择操作 (0-1): " clash_choice
+
+    case "$clash_choice" in
+        1)
+            if [[ "$status" == "未安装" ]]; then
+                echo "[*] 开始安装 Clash..."
+                do_install_clash "$proxy_url" "$branch" "$clone_dir"
+            else
+                echo "[*] 开始卸载 Clash..."
+                do_uninstall_clash "$clone_dir" "$clash_base_dir"
+            fi
+            read -p "按回车返回..."
+            ;;
+        0)
+            # 返回上级菜单
+            ;;
+        *)
+            echo "[-] 无效选项"
+            sleep 1
+            ;;
+    esac
+}
+
+do_install_clash() {
+    local repo_proxy_url="$1"
+    local target_branch="$2"
+    local work_dir="$3"
+
+    # 创建工作目录
+    echo "[*] 创建临时工作目录 $work_dir..."
+    if ! sudo mkdir -p "$work_dir"; then
+        echo "[-] 创建目录失败。"
+        return 1
+    fi
+
+    # 切换到工作目录
+    cd "$work_dir" || { echo "[-] 无法进入目录 $work_dir"; return 1; }
+
+    # --- 步骤 1: 克隆仓库 ---
+    echo "[*] 从 $repo_proxy_url 克隆仓库 (分支: $target_branch)..."
+    if git clone --branch "$target_branch" --depth 1 "$repo_proxy_url" .; then
+        echo "[+] 仓库克隆成功。"
+    else
+        echo "[-] Git 克隆失败，尝试使用原始 URL..."
+        # 如果代理失败，尝试直接连接
+        if git clone --branch "$target_branch" --depth 1 "${repo_proxy_url##*/}" .; then
+            echo "[+] 仓库克隆成功 (使用原始 URL)。"
+        else
+            echo "[-] 所有克隆方式均失败。"
+            return 1
+        fi
+    fi
+
+    # --- 步骤 2: 执行安装脚本 ---
+    # 注意：原 install.sh 是 bash 脚本，但可能需要 root 权限来写入 /etc/clash
+    echo "[*] 执行安装脚本..."
+    # 给予可执行权限以防万一
+    chmod +x install.sh
+
+    # 直接执行 install.sh
+    # 根据你的 install.sh 内容，它会处理资源下载、配置等。
+    if sudo bash install.sh; then
+        echo -e "${GREEN}[+] Clash 安装成功！${NC}"
+        echo ""
+        echo "🎉 安装完成！"
+        echo "请参考原项目文档进行后续配置。"
+        echo "常用命令:"
+        echo "  - 启动: systemctl start clash"
+        echo "  - 停止: systemctl stop clash"
+        echo "  - 自启: systemctl enable clash"
+        echo "  - 查看状态: systemctl status clash"
+    else
+        echo "[-] 执行 install.sh 失败。"
+        return 1
+    fi
+}
+
+do_uninstall_clash() {
+    local work_dir="$1"
+    local clash_dir="$2"
+
+    # --- 步骤 1: 执行官方卸载脚本 ---
+    echo "[*] 尝试执行官方卸载脚本..."
+    if [[ -f "$work_dir/uninstall.sh" ]]; then
+        chmod +x "$work_dir/uninstall.sh"
+        # 执行卸载脚本
+        if sudo bash "$work_dir/uninstall.sh"; then
+            echo "[+] 官方卸载脚本执行成功。"
+        else
+            echo "[-] 官方卸载脚本执行失败。"
+            # 即使失败，我们仍然尝试手动清理
+        fi
+    else
+        echo "[*] 未找到官方卸载脚本，将进行手动清理。"
+    fi
+
+    # --- 步骤 2: 手动清理残留文件 ---
+    echo "[*] 清理残留文件..."
+
+    # 删除安装工作目录
+    if [[ -d "$work_dir" ]]; then
+        sudo rm -rf "$work_dir"
+        echo "[+] 已删除工作目录: $work_dir"
+    fi
+
+    # 删除 systemd 服务 (如果卸载脚本没做)
+    local service_name="clash"
+    if systemctl is-active --quiet "$service_name"; then
+        sudo systemctl stop "$service_name"
+    fi
+    if systemctl is-enabled --quiet "$service_name"; then
+        sudo systemctl disable "$service_name"
+    fi
+    sudo rm -f "/etc/systemd/system/${service_name}.service"
+    sudo systemctl daemon-reload
+
+    # 注意：/etc/clash 目录应由官方 uninstall.sh 处理
+    # 如果这里强制删除，可能会误删用户配置
+    # 我们只在官方脚本不存在时才考虑删除
+    if [[ ! -f "$work_dir/uninstall.sh" ]] && [[ -d "$clash_dir" ]]; then
+        echo "[!] 警告: 未运行官方卸载脚本，即将删除整个 $clash_dir"
+        read -p "[?] 确认删除? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            sudo rm -rf "$clash_dir"
+            echo "[+] 已删除 Clash 主目录: $clash_dir"
+        else
+            echo "[*] 跳过删除 $clash_dir，请手动清理。"
+        fi
+    fi
+
+    echo -e "${GREEN}[+] Clash 卸载流程完成。${NC}"
+}
+
 # === 主程序入口 ===
 check_privileges
 check_system_version
@@ -1354,6 +1531,16 @@ while true; do
             done
             ;;
         4)
+            while true; do
+                show_application_menu
+                case "$application_choice" in
+                    1) manage_clash;;
+                    0) break;;
+                    *) echo "[-] 无效选项"; sleep 1;;
+                esac
+            done
+            ;;
+        5)
             perform_script_update
             read -p "按回车返回主菜单..."
             ;;
