@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.4.2"
+SCRIPT_VERSION="v0.4.3"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -1326,34 +1326,31 @@ perform_script_update() {
 }
 
 manage_clash() {
-    # --- 配置变量 ---
+    # --- 配置变量 (固定不变) ---
     local repo_url="https://github.com/nelvko/clash-for-linux-install.git"
     local proxy_url="https://gh-proxy.com/$repo_url"
     local branch="feat-init"
-    local default_clone_dir="/tmp/clash-for-linux-install" # 临时工作目录
+    local clone_dir="/tmp/clash-for-linux-install" # 使用临时目录
 
-    # --- 核心逻辑：检查 CLASH_BASE_DIR 环境变量 ---
-    local env_clash_base_dir="${CLASH_BASE_DIR}" # 获取环境变量的值
-    local effective_clash_dir="" # 实际用于判断和操作的目录
-    local status="未设置 CLASH_BASE_DIR 环境变量"
+    # --- 核心逻辑：检查 $CLASH_BASE_DIR 环境变量及其对应的目录 ---
+    local clash_base_from_env="${CLASH_BASE_DIR}"
+    local status="未安装"
     local action_prompt=""
+    local target_dir="(未设置)"
 
-    # --- 判断状态 ---
-    if [[ -z "$env_clash_base_dir" ]]; then
-        # 场景 1: 环境变量未设置
-        status="未设置 CLASH_BASE_DIR 环境变量"
-        action_prompt="设置并安装"
-        effective_clash_dir="" # 无有效目录
-    elif [[ -d "$env_clash_base_dir" ]]; then
-        # 场景 2: 环境变量已设置且目录存在 -> 已安装
-        status="已安装"
-        action_prompt="重新安装 / 卸载"
-        effective_clash_dir="$env_clash_base_dir"
+    if [[ -n "$clash_base_from_env" ]]; then
+        target_dir="$clash_base_from_env"
+        if [[ -d "$clash_base_from_env" ]]; then
+            status="已安装"
+            action_prompt="卸载"
+        else
+            status="未安装"
+            action_prompt="安装"
+        fi
     else
-        # 场景 3: 环境变量已设置但目录不存在 -> 未安装 (或已卸载)
-        status="未安装 (CLASH_BASE_DIR 设置为 '$env_clash_base_dir')"
-        action_prompt="安装"
-        effective_clash_dir="$env_clash_base_dir"
+        # $CLASH_BASE_DIR 未设置，视为未安装，操作是设置并安装
+        status="未安装"
+        action_prompt="设置 CLASH_BASE_DIR 并安装"
     fi
 
     clear
@@ -1361,89 +1358,54 @@ manage_clash() {
     echo "=================================="
     echo "       Clash for Linux (feat-init) 管理"
     echo "=================================="
-    echo "CLASH_BASE_DIR 环境变量: ${env_clash_base_dir:-'(未设置)'}"
+    echo "CLASH_BASE_DIR 环境变量: $target_dir"
     echo "当前状态: $status"
-    if [[ -n "$effective_clash_dir" ]]; then
-        echo "目标/安装目录: $effective_clash_dir"
+    if [[ "$status" == "已安装" ]]; then
+        echo "安装目录: $target_dir"
     fi
     echo "Git 分支: $branch"
     echo "----------------------------------"
     echo "1) $action_prompt"
-    # 如果已安装，则显示具体选项
     if [[ "$status" == "已安装" ]]; then
-        echo "   a) 重新安装 (卸载后安装)"
-        echo "   b) 卸载"
+        echo "2) 重新安装 (卸载后安装)"
     fi
-    echo "2) 设置/修改 CLASH_BASE_DIR 环境变量"
     echo "0) 返回上一级菜单"
     echo "----------------------------------"
-    read -p "请选择操作 (0-2 或 a/b): " clash_choice
+    read -p "请选择操作: " clash_choice
 
     case "$clash_choice" in
         1)
             if [[ "$status" == "已安装" ]]; then
-                # 如果已安装，提供子选项
-                read -p "请选择 'a' 重新安装 或 'b' 卸载: " sub_choice
-                case "$sub_choice" in
-                    a)
-                        echo "[*] 开始重新安装 Clash (目录: $effective_clash_dir)..."
-                        # 先卸载
-                        do_uninstall_clash "$default_clone_dir" "$effective_clash_dir"
-                        # 再安装
-                        do_install_clash "$proxy_url" "$branch" "$default_clone_dir" "$effective_clash_dir"
-                        ;;
-                    b)
-                        echo "[*] 开始卸载 Clash (目录: $effective_clash_dir)..."
-                        do_uninstall_clash "$default_clone_dir" "$effective_clash_dir"
-                        ;;
-                    *)
-                        echo "[-] 无效选项"
-                        ;;
-                esac
-            elif [[ "$status" == "未安装 (CLASH_BASE_DIR 设置为"* ]]; then
-                # 如果环境变量设置了但目录不存在，直接安装
-                echo "[*] 开始安装 Clash (目录: $effective_clash_dir)..."
-                do_install_clash "$proxy_url" "$branch" "$default_clone_dir" "$effective_clash_dir"
-            elif [[ -z "$env_clash_base_dir" ]]; then
-                # 如果环境变量未设置，引导用户设置
-                echo "[!] 请先设置 CLASH_BASE_DIR 环境变量 (选择选项 2)。"
+                echo "[*] 开始卸载 Clash (目录: $target_dir)..."
+                do_uninstall_clash "$clone_dir" "$target_dir"
+            elif [[ -n "$clash_base_from_env" ]]; then
+                echo "[*] 开始安装 Clash (目录: $target_dir)..."
+                do_install_clash "$proxy_url" "$branch" "$clone_dir" "$target_dir"
+            else
+                read -p "[?] 请输入安装目录 (例如 /opt/clash): " new_clash_dir
+                if [[ -n "$new_clash_dir" ]]; then
+                    export CLASH_BASE_DIR="$new_clash_dir"
+                    echo "[+] 已设置 CLASH_BASE_DIR='$new_clash_dir'"
+                    echo "[*] 开始安装 Clash (目录: $new_clash_dir)..."
+                    do_install_clash "$proxy_url" "$branch" "$clone_dir" "$new_clash_dir"
+                else
+                    echo "[-] 未输入目录，操作取消。"
+                fi
             fi
             read -p "按回车返回..."
             ;;
         2)
-            read -p "[?] 请输入新的 CLASH_BASE_DIR 路径 (例如 /opt/clash 或 /home/user/my_clash): " new_clash_dir
-            if [[ -n "$new_clash_dir" ]]; then
-                export CLASH_BASE_DIR="$new_clash_dir"
-                echo "[+] 已设置 CLASH_BASE_DIR='$new_clash_dir'"
-                echo "    请重新进入此菜单以刷新状态。"
-                # 可选：自动刷新或提示用户稍后回来
-                read -p "按回车返回..."
+            if [[ "$status" == "已安装" ]]; then
+                echo "[*] 开始重新安装 Clash (目录: $target_dir)..."
+                do_uninstall_clash "$clone_dir" "$target_dir"
+                do_install_clash "$proxy_url" "$branch" "$clone_dir" "$target_dir"
             else
-                echo "[-] 输入为空，未更改。"
-                read -p "按回车返回..."
+                echo "[-] 当前状态不支持重新安装。"
             fi
+            read -p "按回车返回..."
             ;;
         0)
             # 返回上级菜单
-            ;;
-        a|b) # 如果用户直接输入了子选项
-            if [[ "$status" == "已安装" ]]; then
-                case "$clash_choice" in
-                    a)
-                        echo "[*] 开始重新安装 Clash (目录: $effective_clash_dir)..."
-                        do_uninstall_clash "$default_clone_dir" "$effective_clash_dir"
-                        do_install_clash "$proxy_url" "$branch" "$default_clone_dir" "$effective_clash_dir"
-                        ;;
-                    b)
-                         echo "[*] 开始卸载 Clash (目录: $effective_clash_dir)..."
-                         do_uninstall_clash "$default_clone_dir" "$effective_clash_dir"
-                        ;;
-                esac
-                read -p "按回车返回..."
-            else
-                 echo "[-] 当前状态不允许此操作。"
-                 read -p "按回车返回..."
-            fi
             ;;
         *)
             echo "[-] 无效选项"
@@ -1456,28 +1418,28 @@ do_install_clash() {
     local repo_proxy_url="$1"
     local target_branch="$2"
     local work_dir="$3"
-    local install_to_dir="$4" # 这个参数其实可以省略，因为我们用的是环境变量
+    local install_dir="$4" # 用于验证和显示
 
-    # 确保使用的是最新的 CLASH_BASE_DIR 环境变量
-    local final_install_dir="${CLASH_BASE_DIR}"
-    if [[ -z "$final_install_dir" ]]; then
-        echo "[-] 错误：CLASH_BASE_DIR 环境变量未设置。"
-        return 1
+    # 确保 CLASH_BASE_DIR 环境变量已设置并与传入的目录一致
+    if [[ "${CLASH_BASE_DIR}" != "$install_dir" ]]; then
+         echo "[-] 内部错误: CLASH_BASE_DIR ('$CLASH_BASE_DIR') 与预期安装目录 ('$install_dir') 不符。"
+         return 1
     fi
 
-    echo "[*] 创建工作目录 $work_dir..."
-    if ! sudo rm -rf "$work_dir" || ! sudo mkdir -p "$work_dir"; then
-        echo "[-] 创建/清空工作目录失败。"
-        return 1
-    fi
+    echo "[*] 准备安装 Clash 到: $install_dir"
 
+    # 清理并创建工作目录
+    echo "[*] 创建/清空工作目录 $work_dir..."
+    sudo rm -rf "$work_dir" && sudo mkdir -p "$work_dir"
     cd "$work_dir" || { echo "[-] 无法进入目录 $work_dir"; return 1; }
 
-    echo "[*] 从 $repo_proxy_url 克隆仓库 (分支: $target_branch)..."
+    # 克隆仓库
+    echo "[*] 克隆仓库 (分支: $target_branch)..."
     if git clone --branch "$target_branch" --depth 1 "$repo_proxy_url" .; then
         echo "[+] 仓库克隆成功。"
     else
         echo "[-] Git 克隆失败，尝试使用原始 URL..."
+        local repo_url="https://github.com/nelvko/clash-for-linux-install.git"
         if git clone --branch "$target_branch" --depth 1 "${repo_url}" .; then
             echo "[+] 仓库克隆成功 (使用原始 URL)。"
         else
@@ -1486,31 +1448,22 @@ do_install_clash() {
         fi
     fi
 
-    echo "[*] 执行安装脚本，安装到 \$CLASH_BASE_DIR ($final_install_dir) ..."
+    # 赋予执行权限
     chmod +x install.sh
 
-    # *** 关键：确保 CLASH_BASE_DIR 环境变量被传递 ***
-    # 因为我们是在 manage_clash 中 export 的，这里应该继承。
-    # 为了保险，可以显式传递，但这通常没必要。
-    # sudo CLASH_BASE_DIR="$final_install_dir" bash install.sh
-    # 更推荐的做法是依赖 manage_clash 中的 export
-    if sudo bash install.sh; then
+    # --- 关键：执行安装脚本，确保 CLASH_BASE_DIR 生效 ---
+    # 使用 bash -c 并在其中 export，然后 exec，这是最可靠的传递环境变量给 sudo 子进程的方法
+    echo "[*] 执行 install.sh (CLASH_BASE_DIR=$install_dir)..."
+    if sudo bash -c "export CLASH_BASE_DIR='$install_dir'; exec bash install.sh"; then
         echo -e "${GREEN}[+] Clash 安装成功！${NC}"
-        echo ""
-        echo "🎉 安装完成！"
-        echo "安装目录: $final_install_dir"
-        local service_name="clash" # 默认
-        if [[ -f "/etc/systemd/system/mihomo.service" ]]; then
-            service_name="mihomo"
-        elif [[ -f "/etc/systemd/system/clash.service" ]]; then
-            service_name="clash"
+        echo "安装目录: $install_dir"
+        # 尝试提示服务名
+        local service_file=$(ls /etc/systemd/system/*clash*.service 2>/dev/null | head -n1)
+        if [[ -n "$service_file" ]]; then
+            local service_name=$(basename "$service_file" .service)
+            echo "服务名称: $service_name"
+            echo "启动命令: sudo systemctl start $service_name"
         fi
-        echo "服务名称: $service_name"
-        echo "常用命令:"
-        echo "  - 启动: sudo systemctl start $service_name"
-        echo "  - 停止: sudo systemctl stop $service_name"
-        echo "  - 自启: sudo systemctl enable $service_name"
-        echo "  - 查看日志: journalctl -u $service_name -f"
     else
         echo "[-] 执行 install.sh 失败。"
         return 1
@@ -1519,31 +1472,32 @@ do_install_clash() {
 
 do_uninstall_clash() {
     local work_dir="$1"
-    local clash_dir="$2" # 这个参数也可以省略
+    local uninstall_dir="$2" # 用于验证和显示
 
-    # 确保使用的是最新的 CLASH_BASE_DIR 环境变量
-    local final_uninstall_dir="${CLASH_BASE_DIR}"
-    if [[ -z "$final_uninstall_dir" ]]; then
-        echo "[-] 错误：CLASH_BASE_DIR 环境变量未设置。"
-        return 1
+    # 确保 CLASH_BASE_DIR 环境变量已设置并与传入的目录一致
+    if [[ "${CLASH_BASE_DIR}" != "$uninstall_dir" ]]; then
+         echo "[-] 内部错误: CLASH_BASE_DIR ('$CLASH_BASE_DIR') 与预期卸载目录 ('$uninstall_dir') 不符。"
+         return 1
     fi
 
+    echo "[*] 准备卸载 Clash (目录: $uninstall_dir)"
+
+    # --- 执行卸载 ---
     # 1. 首先尝试在克隆的工作目录中执行官方卸载脚本
     if [[ -f "$work_dir/uninstall.sh" ]]; then
-        echo "[*] 尝试在工作目录执行官方卸载脚本 (\$CLASH_BASE_DIR=$final_uninstall_dir)..."
+        echo "[*] 执行工作目录中的 uninstall.sh (CLASH_BASE_DIR=$uninstall_dir)..."
         chmod +x "$work_dir/uninstall.sh"
-        # *** 关键：传递 CLASH_BASE_DIR 环境变量 ***
-        if sudo CLASH_BASE_DIR="$final_uninstall_dir" bash "$work_dir/uninstall.sh"; then
+        if sudo bash -c "export CLASH_BASE_DIR='$uninstall_dir'; exec bash $work_dir/uninstall.sh"; then
             echo "[+] 官方卸载脚本执行成功。"
         else
             echo "[-] 官方卸载脚本执行失败。"
         fi
     else
-        echo "[*] 工作目录中未找到卸载脚本，尝试在线下载并执行..."
+        echo "[*] 工作目录中未找到 uninstall.sh，尝试在线下载并执行..."
         local temp_uninstall_dir
         temp_uninstall_dir=$(mktemp -d)
-        cd "$temp_uninstall_dir" || { echo "[-] 无法进入临时目录 $temp_uninstall_dir"; return 1; }
-
+        (
+        cd "$temp_uninstall_dir" || exit 1
         local repo_url="https://github.com/nelvko/clash-for-linux-install.git"
         local proxy_url="https://gh-proxy.com/$repo_url"
         local branch="feat-init"
@@ -1551,7 +1505,7 @@ do_uninstall_clash() {
         if git clone --branch "$branch" --depth 1 "$proxy_url" .; then
             if [[ -f "./uninstall.sh" ]]; then
                  chmod +x ./uninstall.sh
-                 if sudo CLASH_BASE_DIR="$final_uninstall_dir" bash ./uninstall.sh; then
+                 if sudo bash -c "export CLASH_BASE_DIR='$uninstall_dir'; exec bash ./uninstall.sh"; then
                      echo "[+] 在线下载并执行卸载脚本成功。"
                  else
                      echo "[-] 在线下载并执行卸载脚本失败。"
@@ -1562,18 +1516,17 @@ do_uninstall_clash() {
         else
             echo "[-] 无法在线下载仓库以执行卸载脚本。"
         fi
-        cd /
+        )
         rm -rf "$temp_uninstall_dir"
     fi
 
+    # 清理工作目录
     if [[ -d "$work_dir" ]]; then
         sudo rm -rf "$work_dir"
         echo "[+] 已删除工作目录: $work_dir"
     fi
 
     echo -e "${GREEN}[+] Clash 卸载流程结束。${NC}"
-    echo "    - 工作目录 $work_dir 已清理。"
-    echo "    - Clash 目录 \$CLASH_BASE_DIR ($final_uninstall_dir) 应已被官方脚本卸载。"
 }
 
 # === 主程序入口 ===
