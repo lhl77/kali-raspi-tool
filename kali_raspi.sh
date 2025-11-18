@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.4.4"
+SCRIPT_VERSION="v0.4.5"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -1442,41 +1442,51 @@ do_install_clash() {
 
     # 赋予执行权限
     chmod +x install.sh
+    chmod +x uninstall.sh # 也要确保卸载脚本可执行
+
+    # --- 新增步骤：在安装前先尝试卸载 ---
+    echo "[*] (预清理) 尝试执行 uninstall.sh 以确保安装路径干净..."
+    # 获取当前的 CLASH_BASE_DIR 值用于传递
+    local current_clash_base_dir="${CLASH_BASE_DIR}"
+    # 使用 bash -c 显式传递环境变量并执行卸载脚本
+    # 使用 || true 来忽略卸载脚本可能因路径不存在而报错的情况
+    sudo bash -c "export CLASH_BASE_DIR='$current_clash_base_dir'; exec bash uninstall.sh" || echo "[!] 预清理卸载可能未找到任何内容或失败，但这通常没关系。"
+
 
     # --- 关键：执行安装脚本 ---
-    # 直接执行，让 install.sh 读取环境中的 $CLASH_BASE_DIR 或使用其内置默认值
     echo "[*] 执行 install.sh..."
-    # 使用 bash -c 并在其中 export 当前环境的所有变量，然后 exec，确保 CLASH_BASE_DIR 生效
-    # 或者更简单，直接 sudo，因为我们在调用 manage_clash 时可能就已经在 sudo 环境下了？
-    # 为了保险，还是显式传递比较好。
-    # 但是，如果 manage_clash 本身就是用 sudo 运行的，那么 CLASH_BASE_DIR 应该已经在 root 的环境中了。
-    # 这里假设 manage_clash 是普通用户运行的，需要 sudo 来执行 install.sh。
-    # 最稳妥的方式是，在 sudo 的命令中重建当前 shell 的环境。
-    # sudo -E 会保留用户环境变量，但对于 root 权限的脚本，可能不安全或不被推荐。
-    # 最标准的做法是显式传递需要的变量。
-    
     # 获取当前的 CLASH_BASE_DIR 值
     local current_clash_base_dir="${CLASH_BASE_DIR}"
-    
+
     if sudo bash -c "export CLASH_BASE_DIR='$current_clash_base_dir'; exec bash install.sh"; then
         echo -e "${GREEN}[+] Clash 安装成功！${NC}"
-        # 尝试显示安装信息
+        
+        # --- 尝试显示安装信息 ---
+        # 1. 显示使用的安装目录
         if [[ -n "$current_clash_base_dir" ]]; then
             echo "安装目录: $current_clash_base_dir"
         else
-            # 如果没设置，脚本用了默认值，我们尝试从预检脚本推测
-            # 这有点 hacky，但可以提供一点反馈
-            # 或者直接提示用户查看 install.sh 的输出或系统服务
-            echo "已使用脚本默认目录进行安装 (通常是 /opt/clash)。"
+            # 如果没设置，脚本用了默认值 (通常是 /root/opt/clashctl)
+            # 我们可以从环境变量或 install.sh 输出中尝试获取，但直接显示提示更可靠
+            echo "已使用脚本默认目录进行安装 (通常是 /root/opt/clashctl)。"
         fi
         
-        # 尝试提示服务名
+        # 2. 尝试提示服务名
         local service_file=$(ls /etc/systemd/system/*clash*.service 2>/dev/null | head -n1)
         if [[ -n "$service_file" ]]; then
             local service_name=$(basename "$service_file" .service)
             echo "服务名称: $service_name"
             echo "启动命令: sudo systemctl start $service_name"
+        else
+             # 如果找不到特定的 clash 服务，尝试通用的 mihomo (因为这是上游)
+             if systemctl list-unit-files | grep -q '^mihomo\.service'; then
+                  echo "服务名称: mihomo (可能是此项目的别名)"
+                  echo "启动命令: sudo systemctl start mihomo"
+             else
+                  echo "未能自动检测到 systemd 服务名，请检查 /etc/systemd/system/ 或 install.sh 输出。"
+             fi
         fi
+        
     else
         echo "[-] 执行 install.sh 失败。"
         return 1
