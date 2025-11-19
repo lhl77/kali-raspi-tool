@@ -3,6 +3,7 @@
 # kali_raspi.sh - Kali Linux 树莓派脚本 
 # 作者 lhl77
 # GitHub 仓库: https://github.com/lhl77/kali-raspi-tool
+
 set -e
 
 # 颜色定义
@@ -13,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.4.6"
+SCRIPT_VERSION="v0.4.7"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -1326,7 +1327,7 @@ perform_script_update() {
 
 manage_clash() {
     # --- 配置变量 (固定不变) ---
-    local repo_url="https://github.com/nelvko/clash-for-linux-install.git"
+    local repo_url="https://github.com/lhl77/clash-for-linux-install.git"
     local proxy_url="https://gh-proxy.com/$repo_url"
     local branch="feat-init"
     local clone_dir="/tmp/clash-for-linux-install" # 使用临时目录
