@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.4.10"
+SCRIPT_VERSION="v0.4.11"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -1330,7 +1330,7 @@ manage_clash() {
     local repo_url="https://github.com/lhl77/clash-for-linux-install.git"
     local proxy_url="https://gh-proxy.com/$repo_url"
     local branch="feat-init"
-    local clone_dir="/tmp/clash-for-linux-install" # 使用临时目录
+    local clone_dir="~/tmp/clash-for-linux-install" # 使用临时目录
 
     # --- 核心逻辑：仅检查 $CLASH_BASE_DIR 环境变量对应的目录是否存在 ---
     local clash_base_from_env="${CLASH_BASE_DIR}"
