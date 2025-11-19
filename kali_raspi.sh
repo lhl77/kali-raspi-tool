@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.4.12"
+SCRIPT_VERSION="v0.4.13"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -1483,10 +1483,30 @@ do_install_clash() {
         echo -e "${GREEN}[+] Clash 安装成功！${NC}"
         
         # --- 显示安装信息 ---
-        echo "安装目录: $current_clash_base_dir"
-        echo "请查看上方 install.sh 的完整输出以获取服务名称、启动方式等详细信息。"
-        echo "您可能需要手动将 clashctl 添加到 PATH，或根据 install.sh 的提示进行操作。"
+        #echo "安装目录: $current_clash_base_dir"
+        #echo "请查看上方 install.sh 的完整输出以获取服务名称、启动方式等详细信息。"
+        #echo "您可能需要手动将 clashctl 添加到 PATH，或根据 install.sh 的提示进行操作。"
         
+        # --- 新增：修复 clashctl 权限 ---
+        echo "[*] 检查并修复 /usr/local/bin/clashctl 权限..."
+        # 以 root 身份检查文件是否存在
+        if [[ -f "/usr/local/bin/clashctl" ]]; then
+            # 获取当前权限
+            local current_perms
+            current_perms=$(stat -c "%a" /usr/local/bin/clashctl)
+            # 检查是否缺少执行权限 (例如，如果是 644)
+            # 简单检查最后一位是否为 4 或 5 (无执行) vs 5 或 7 (有执行)
+            # 更严谨可以用位运算，这里简化处理
+            if [[ "$current_perms" =~ [0-7][0-7][0-3] ]] || [[ "$current_perms" =~ [0-7][0-7][4-6] && ! "$current_perms" =~ [1357]$ ]]; then
+                 echo "[*] 检测到权限不足 ($current_perms)，正在添加执行权限..."
+                 chmod +x /usr/local/bin/clashctl
+                 echo "[+] /usr/local/bin/clashctl 权限已修正。"
+            else
+                 echo "[*] /usr/local/bin/clashctl 权限看起来正常 ($current_perms)。"
+            fi
+        else
+            echo "[!] 警告：未找到 /usr/local/bin/clashctl 文件。"
+        fi
     else
         echo "[-] 执行 install.sh 失败。"
         return 1
