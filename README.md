@@ -1,6 +1,7 @@
-# 🛠️ kali-raspi-tool — 树莓派 Kali Linux 脚本工具箱
+# 🛠️ 树莓派脚本工具箱
 
 > 一个专为 **Kali Linux on Raspberry Pi** 设计的一键式配置与管理脚本，简化系统汉化、远程访问、硬件驱动安装等常见操作。
+> 其他基于Debian的发行版均可用，目前Kali Linux经过测试能够使用
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 ![Platform: Raspberry Pi](https://img.shields.io/badge/Platform-Raspberry%20Pi-orange)
@@ -26,6 +27,8 @@
 ### 🔄 自动更新
 - **一键检查并更新脚本**：从 GitHub 主分支拉取最新版本，无缝升级
 
+### 🌐 必备软件
+- **Clash命令行版（mihomo内核）**：一键安装，包括subconverter订阅转换
 ---
 
 ## 🚀 快速开始
