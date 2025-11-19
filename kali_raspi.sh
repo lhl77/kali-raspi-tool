@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.4.8"
+SCRIPT_VERSION="v0.4.9"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -1431,7 +1431,7 @@ do_install_clash() {
         echo "[+] 仓库克隆成功。"
     else
         echo "[-] Git 克隆失败，尝试使用原始 URL..."
-        local repo_url="https://github.com/lhl/clash-for-linux-install.git"
+        local repo_url="https://github.com/lhl77/clash-for-linux-install.git"
         if git clone --branch "$target_branch" --depth 1 "${repo_url}" .; then
             echo "[+] 仓库克隆成功 (使用原始 URL)。"
         else
@@ -1521,7 +1521,7 @@ do_uninstall_clash() {
         temp_uninstall_dir=$(mktemp -d)
         (
         cd "$temp_uninstall_dir" || exit 1
-        local repo_url="https://github.com/nelvko/clash-for-linux-install.git"
+        local repo_url="https://github.com/lhl77/clash-for-linux-install.git"
         local proxy_url="https://gh-proxy.com/$repo_url"
         local branch="feat-init"
 
