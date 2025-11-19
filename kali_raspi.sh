@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.4.14"
+SCRIPT_VERSION="v0.5.0"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -1448,11 +1448,10 @@ manage_clash() {
     clear
     show_banner
     echo "=================================="
-    echo "       Clash for Linux (feat-init) 管理"
+    echo "       Clash for Linux 管理"
     echo "=================================="
     echo "当前状态: $status"
     echo "$display_dir_info"
-    echo "Git 分支: $branch"
     echo "----------------------------------"
     echo "1) $action_prompt"
     echo "0) 返回上一级菜单"
