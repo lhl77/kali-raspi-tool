@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.4.11"
+SCRIPT_VERSION="v0.4.12"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -1420,9 +1420,15 @@ do_install_clash() {
 
     echo "[*] 准备安装 Clash..."
 
+    # --- 新增：检查前提条件 ---
+    if [[ $UID -ne 0 ]] || [[ -z "$SUDO_USER" ]]; then
+        echo "[-] 错误：此函数必须在通过 'sudo' 运行的脚本中调用，并且需要 \$SUDO_USER 环境变量。"
+        return 1
+    fi
+
     # 清理并创建工作目录
     echo "[*] 创建/清空工作目录 $work_dir..."
-    rm -rf "$work_dir" && mkdir -p "$work_dir" # 不需要 sudo，因为已经是 root
+    rm -rf "$work_dir" && mkdir -p "$work_dir" # 已经是 root，无需 sudo
     cd "$work_dir" || { echo "[-] 无法进入目录 $work_dir"; return 1; }
 
     # 克隆仓库
@@ -1444,65 +1450,45 @@ do_install_clash() {
     chmod +x install.sh
     chmod +x uninstall.sh
 
+    # --- 新增：为 SUDO_USER 预先设置 CLASH_BASE_DIR 及其子目录 ---
+    local current_clash_base_dir="${CLASH_BASE_DIR:-/home/$SUDO_USER/.local/share/clash}" # 默认值或使用传入的
+    echo "[*] 准备安装目录: $current_clash_base_dir (为用户 $SUDO_USER)"
+
+    # 1. 创建必要的目录结构 (在 root 权限下)
+    mkdir -p "$current_clash_base_dir/resources/zip"
+    mkdir -p "$current_clash_base_dir/bin"
+    mkdir -p "$current_clash_base_dir/cmd"
+
+    # 2. 将目录的所有权交给 SUDO_USER (关键步骤)
+    chown -R "$SUDO_USER:$SUDO_USER" "$current_clash_base_dir"
+
+    # 3. 确保权限足够 (递归设置读、写、执行权限给所有者)
+    #    这一步其实 chown 后通常就够了，但显式设置更保险
+    chmod -R u+rwx "$current_clash_base_dir"
+
     # --- 在安装前先尝试卸载 ---
     echo "[*] (预清理) 尝试执行 uninstall.sh 以确保安装路径干净..."
-    local current_clash_base_dir="${CLASH_BASE_DIR}"
-
-    # --- 关键修改 ---
-    # 如果当前是 root ($UID == 0)，并且知道原始用户 ($SUDO_USER 存在)
-    # 则使用 sudo -u 切换回原始用户来执行 uninstall.sh
-    # 这样 uninstall.sh 就像被普通用户调用一样
-    if [[ $UID -eq 0 ]] && [[ -n "$SUDO_USER" ]]; then
-        echo "[*] 检测到在 root 环境下运行，将以用户 $SUDO_USER 身份执行 uninstall.sh..."
-        # 使用 sudo -u 切换用户，并传递环境变量
-        # 注意：这里不能再用 bash -c "exec ..." 的形式，因为我们之前发现 exec 会导致脚本退出
-        # 也不需要 sudo bash -c ... 因为我们已经是 root 了，直接 sudo -u 切用户即可
-        if sudo -u "$SUDO_USER" env CLASH_BASE_DIR="$current_clash_base_dir" bash uninstall.sh; then
-            echo "[+] 预清理卸载完成。"
-        else
-            echo "[!] 预清理卸载可能未找到任何内容或失败，但这通常没关系。"
-        fi
+    # 使用 sudo -u 切换回原始用户身份执行
+    if sudo -u "$SUDO_USER" env CLASH_BASE_DIR="$current_clash_base_dir" sudo bash uninstall.sh; then
+        echo "[+] 预清理卸载完成。"
     else
-         # 如果 somehow 不是 root 或者不知道 SUDO_USER，降级处理（理论上不太可能）
-         echo "[*] 未检测到 root + SUDO_USER，直接执行 uninstall.sh..."
-         if env CLASH_BASE_DIR="$current_clash_base_dir" bash uninstall.sh; then
-              echo "[+] 预清理卸载完成。"
-         else
-              echo "[!] 预清理卸载可能未找到任何内容或失败，但这通常没关系。"
-         fi
+        echo "[!] 预清理卸载可能未找到任何内容或失败，但这通常没关系。"
+        # 不返回，继续安装
     fi
-
 
     # --- 执行安装脚本 ---
     echo "[*] 执行 install.sh..."
-    local current_clash_base_dir="${CLASH_BASE_DIR}"
-
-    # --- 关键修改 ---
-    # 同样，使用 sudo -u 切换回原始用户来执行 install.sh
-    if [[ $UID -eq 0 ]] && [[ -n "$SUDO_USER" ]]; then
-        echo "[*] 检测到在 root 环境下运行，将以用户 $SUDO_USER 身份执行 install.sh..."
-        if sudo -u "$SUDO_USER" env CLASH_BASE_DIR="$current_clash_base_dir" bash install.sh; then
-            echo -e "${GREEN}[+] Clash 安装成功！${NC}"
-
-            # --- 显示安装信息 ---
-            if [[ -n "$current_clash_base_dir" ]]; then
-                echo "安装目录: $current_clash_base_dir"
-            else
-                # 尝试从 install.sh 的默认行为推断，或者直接提示查看输出
-                # install.sh 会打印最终安装目录和服务名
-                echo "已使用脚本默认目录进行安装。"
-            fi
-
-            # 尝试提示服务名 (这部分通常由 install.sh 输出，我们可以尝试解析)
-            # 或者简单提示用户去查看
-            echo "请查看上方 install.sh 的输出以获取服务名称和启动方式。"
-
-        else
-            echo "[-] 执行 install.sh 失败。"
-            return 1
-        fi
+    # 同样，使用 sudo -u 切换回原始用户身份执行
+    if sudo -u "$SUDO_USER" env CLASH_BASE_DIR="$current_clash_base_dir" sudo bash install.sh; then
+        echo -e "${GREEN}[+] Clash 安装成功！${NC}"
+        
+        # --- 显示安装信息 ---
+        echo "安装目录: $current_clash_base_dir"
+        echo "请查看上方 install.sh 的完整输出以获取服务名称、启动方式等详细信息。"
+        echo "您可能需要手动将 clashctl 添加到 PATH，或根据 install.sh 的提示进行操作。"
+        
     else
-        echo "[-] 错误：此脚本应在通过 sudo 运行的管理脚本中调用，以便获取原始用户信息。"
+        echo "[-] 执行 install.sh 失败。"
         return 1
     fi
 }
@@ -1512,7 +1498,30 @@ do_uninstall_clash() {
 
     echo "[*] 准备卸载 Clash..."
 
-    local current_clash_base_dir="${CLASH_BASE_DIR}"
+     # --- 新增：检查前提条件 ---
+    if [[ $UID -ne 0 ]] || [[ -z "$SUDO_USER" ]]; then
+        echo "[-] 错误：此函数必须在通过 'sudo' 运行的脚本中调用，并且需要 \$SUDO_USER 环境变量。"
+        return 1
+    fi
+
+    local current_clash_base_dir="${CLASH_BASE_DIR:-/home/$SUDO_USER/.local/share/clash}"
+
+    # --- 新增：确保目录存在且用户有权限访问（以防万一）---
+    # 卸载可能不需要写，但读取配置可能需要。
+    # 如果目录不存在或权限不对，提前警告比让 uninstall.sh 报错好。
+    if [[ -d "$current_clash_base_dir" ]]; then
+         # 检查用户是否有读权限 (基础检查)
+         if ! sudo -u "$SUDO_USER" test -r "$current_clash_base_dir"; then
+              echo "[!] 警告：用户 $SUDO_USER 可能无法访问安装目录 $current_clash_base_dir"
+              # 可以选择修复权限或继续尝试卸载
+              echo "[*] 尝试修复权限..."
+              chown -R "$SUDO_USER:$SUDO_USER" "$current_clash_base_dir"
+              chmod -R u+rwx "$current_clash_base_dir"
+         fi
+    else
+        echo "[*] 安装目录 $current_clash_base_dir 不存在，可能已被卸载或从未安装。"
+    fi
+
 
     # --- 执行卸载 ---
     # 1. 首先尝试在克隆的工作目录中执行官方卸载脚本
@@ -1520,21 +1529,11 @@ do_uninstall_clash() {
         echo "[*] 执行工作目录中的 uninstall.sh..."
         chmod +x "$work_dir/uninstall.sh"
         
-        # --- 关键修改 ---
-        if [[ $UID -eq 0 ]] && [[ -n "$SUDO_USER" ]]; then
-            echo "[*] 检测到在 root 环境下运行，将以用户 $SUDO_USER 身份执行 uninstall.sh..."
-            if sudo -u "$SUDO_USER" env CLASH_BASE_DIR="$current_clash_base_dir" bash "$work_dir/uninstall.sh"; then
-                echo "[+] 官方卸载脚本执行成功。"
-            else
-                echo "[-] 官方卸载脚本执行失败。"
-            fi
+        # 使用 sudo -u 切换回原始用户身份执行
+        if sudo -u "$SUDO_USER" env CLASH_BASE_DIR="$current_clash_base_dir" bash "$work_dir/uninstall.sh"; then
+            echo "[+] 官方卸载脚本执行成功。"
         else
-             echo "[*] 未检测到 root + SUDO_USER，直接执行 uninstall.sh..."
-             if env CLASH_BASE_DIR="$current_clash_base_dir" bash "$work_dir/uninstall.sh"; then
-                 echo "[+] 官方卸载脚本执行成功。"
-             else
-                 echo "[-] 官方卸载脚本执行失败。"
-             fi
+            echo "[-] 官方卸载脚本执行失败。"
         fi
 
     else
@@ -1551,21 +1550,11 @@ do_uninstall_clash() {
             if [[ -f "./uninstall.sh" ]]; then
                  chmod +x ./uninstall.sh
                  
-                 # --- 关键修改 ---
-                 if [[ $UID -eq 0 ]] && [[ -n "$SUDO_USER" ]]; then
-                     echo "[*] 检测到在 root 环境下运行，将以用户 $SUDO_USER 身份执行在线下载的 uninstall.sh..."
-                     if sudo -u "$SUDO_USER" env CLASH_BASE_DIR="$current_clash_base_dir" bash ./uninstall.sh; then
-                         echo "[+] 在线下载并执行卸载脚本成功。"
-                     else
-                         echo "[-] 在线下载并执行卸载脚本失败。"
-                     fi
+                 # 使用 sudo -u 切换回原始用户身份执行
+                 if sudo -u "$SUDO_USER" env CLASH_BASE_DIR="$current_clash_base_dir" sudo bash ./uninstall.sh; then
+                     echo "[+] 在线下载并执行卸载脚本成功。"
                  else
-                      echo "[*] 未检测到 root + SUDO_USER，直接执行在线下载的 uninstall.sh..."
-                      if env CLASH_BASE_DIR="$current_clash_base_dir" bash ./uninstall.sh; then
-                          echo "[+] 在线下载并执行卸载脚本成功。"
-                      else
-                          echo "[-] 在线下载并执行卸载脚本失败。"
-                      fi
+                     echo "[-] 在线下载并执行卸载脚本失败。"
                  fi
 
             else
@@ -1580,7 +1569,7 @@ do_uninstall_clash() {
 
     # 清理工作目录
     if [[ -d "$work_dir" ]]; then
-        rm -rf "$work_dir" # 不需要 sudo
+        rm -rf "$work_dir" # 已经是 root，无需 sudo
         echo "[+] 已删除工作目录: $work_dir"
     fi
 
