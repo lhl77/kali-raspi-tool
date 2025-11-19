@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 脚本版本
-SCRIPT_VERSION="v0.4.13"
+SCRIPT_VERSION="v0.4.14"
 
 check_privileges() {
   if [[ $EUID -ne 0 ]] && ! sudo -v &>/dev/null; then
@@ -1325,35 +1325,123 @@ perform_script_update() {
     fi
 }
 
+# --- 新增：Clash 安装状态检查函数 ---
+is_clash_installed() {
+    local errors_found=0
+
+    echo "[*] 正在检查 Clash 安装状态..."
+
+    # 1. 检查核心管理工具 clashctl 是否存在且可执行
+    #    - command -v 会在 PATH 中查找
+    #    - 如果不在 PATH，检查常见绝对路径并确认可执行
+    if command -v clashctl &> /dev/null; then
+        echo "[+] 找到 clashctl 命令: $(command -v clashctl)"
+    elif [[ -f "/usr/local/bin/clashctl" ]] && [[ -x "/usr/local/bin/clashctl" ]]; then
+        echo "[+] 找到 clashctl 文件 (但可能不在 PATH 中): /usr/local/bin/clashctl"
+    else
+        echo "[-] 未找到可执行的 clashctl 命令或文件。"
+        ((errors_found++))
+    fi
+
+    # 2. 检查 Systemd 服务是否存在
+    #    - 你需要知道 install.sh 安装的服务的确切名称
+    #    - 这里假设几个常见的名称，你需要根据实际情况调整
+    local service_names_to_check=("clash" "clash-core")
+    local service_found=false
+    local found_service_name=""
+
+    # 如果你知道服务名通常与用户相关，也可以加入检查
+    if [[ -n "$SUDO_USER" ]]; then
+        service_names_to_check+=("clash@$SUDO_USER" "clash-core@$SUDO_USER")
+    fi
+
+    for service_name in "${service_names_to_check[@]}"; do
+        if systemctl list-unit-files --type=service | grep -q "^${service_name}\.service"; then
+            service_found=true
+            found_service_name="$service_name"
+            echo "[+] 找到 Clash Systemd 服务: $service_name"
+            break # 找到第一个就停止
+        fi
+    done
+
+    if [[ "$service_found" == false ]]; then
+        echo "[-] 未找到 Clash Systemd 服务。检查过的名称: ${service_names_to_check[*]}"
+        ((errors_found++))
+    else
+        # 导出服务名，供 manage_clash 函数使用
+        export CLASH_SERVICE_NAME="$found_service_name"
+    fi
+
+    # 3. (可选) 检查配置目录是否存在
+    #    - CLASH_BASE_DIR 环境变量应该在调用 manage_clash 时已设置或可推断
+    #    - 检查是否存在基本的配置文件
+    if [[ -n "$CLASH_BASE_DIR" ]]; then
+        if [[ -d "$CLASH_BASE_DIR" ]]; then
+            echo "[+] 找到 Clash 配置目录: $CLASH_BASE_DIR"
+            # 可以进一步检查 config.yaml 等
+            # if [[ ! -f "$CLASH_BASE_DIR/config.yaml" ]]; then
+            #     echo "[!] 警告：配置目录中未找到 config.yaml"
+            # fi
+        else
+            echo "[-] Clash 配置目录不存在: $CLASH_BASE_DIR"
+            # ((errors_found++)) # 可选：严格要求目录存在
+        fi
+    else
+        # 尝试推断默认目录
+        local default_clash_dir=""
+        if [[ -n "$SUDO_USER" ]]; then
+             default_clash_dir="/home/$SUDO_USER/.local/share/clash"
+        fi
+        if [[ -n "$default_clash_dir" ]] && [[ -d "$default_clash_dir" ]]; then
+            echo "[+] 找到默认 Clash 配置目录: $default_clash_dir"
+            export CLASH_BASE_DIR="$default_clash_dir" # 导出供后续使用
+        else
+            echo "[!] 警告：未设置 CLASH_BASE_DIR，且无法推断默认目录。"
+        fi
+    fi
+
+    # --- 最终判断 ---
+    if [[ $errors_found -eq 0 ]]; then
+        echo -e "${GREEN}[+] Clash 环境检查通过。${NC}"
+        return 0 # 安装良好
+    else
+        echo -e "${RED}[-] Clash 环境检查失败 ($errors_found 个问题)。${NC}"
+        return 1 # 安装存在问题或未安装
+    fi
+}
+
 manage_clash() {
-    # --- 配置变量 (固定不变) ---
+    # --- 1. 定义 CLASH_BASE_DIR (关键！) ---
+    # 这里必须定义，否则 -d "$clash_base_from_env" 会检查一个空路径
+    # 你可以选择一个默认值，或者从环境变量获取
+    local CLASH_BASE_DIR="${CLASH_BASE_DIR:-/home/$SUDO_USER/.local/share/clash}"
+    # 解释: 如果环境变量 CLASH_BASE_DIR 已设置，则使用它；否则使用默认值
+
+    # --- 2. 配置变量 ---
     local repo_url="https://github.com/lhl77/clash-for-linux-install.git"
     local proxy_url="https://gh-proxy.com/$repo_url"
     local branch="feat-init"
-    local clone_dir="~/tmp/clash-for-linux-install" # 使用临时目录
+    
+    # --- 3. 修复 clone_dir 路径 (使用 $SUDO_USER) ---
+    # 使用 $SUDO_USER 来构建绝对路径，并确保 ~ 被正确展开
+    local clone_dir="/home/$SUDO_USER/tmp/clash-for-linux-install"
+    # 或者使用 $HOME，但 $HOME 在 sudo 环境下可能还是 root 的家目录
+    # local clone_dir="$HOME/tmp/clash-for-linux-install" # 可能不对
+    # 更安全: 使用 SUDO_USER
+    # local clone_dir=$(getent passwd "$SUDO_USER" | cut -d: -f6)/tmp/clash-for-linux-install
 
-    # --- 核心逻辑：仅检查 $CLASH_BASE_DIR 环境变量对应的目录是否存在 ---
-    local clash_base_from_env="${CLASH_BASE_DIR}"
+    # --- 4. 核心逻辑：检查 $CLASH_BASE_DIR 目录是否存在 ---
     local status="未安装"
     local display_dir_info=""
     local action_prompt=""
 
-    # 判断状态
-    if [[ -n "$clash_base_from_env" ]] && [[ -d "$clash_base_from_env" ]]; then
-        # $CLASH_BASE_DIR 已设置且其指向的目录存在 -> 已安装
+    if [[ -d "$CLASH_BASE_DIR" ]]; then
         status="已安装"
-        display_dir_info="安装目录: $clash_base_from_env"
+        display_dir_info="安装目录: $CLASH_BASE_DIR"
         action_prompt="卸载 / 重新安装"
     else
-        # $CLASH_BASE_DIR 未设置 或 其指向的目录不存在 -> 未安装
-        # 我们不关心具体原因，统一视为未安装
         status="未安装"
-        # 可以显示环境变量的值（如果有的话），方便调试
-        if [[ -n "$clash_base_from_env" ]]; then
-            display_dir_info="CLASH_BASE_DIR 指向: $clash_base_from_env (目录不存在)"
-        else
-            display_dir_info="CLASH_BASE_DIR 未设置 (将使用脚本默认值)"
-        fi
+        display_dir_info="安装目录: $CLASH_BASE_DIR (目录不存在)"
         action_prompt="安装"
     fi
 
@@ -1374,21 +1462,17 @@ manage_clash() {
     case "$clash_choice" in
         1)
             if [[ "$status" == "已安装" ]]; then
-                # 已安装 -> 提供卸载或重装选项
                 echo "1) 卸载"
                 echo "2) 重新安装 (卸载后安装)"
                 read -p "请选择: " sub_choice
                 case "$sub_choice" in
                     1)
                         echo "[*] 开始卸载 Clash..."
-                        # 卸载时，必须确保 CLASH_BASE_DIR 是正确的
                         do_uninstall_clash "$clone_dir"
                         ;;
                     2)
                         echo "[*] 开始重新安装 Clash..."
-                        # 重装 = 先卸载再安装
                         do_uninstall_clash "$clone_dir"
-                        # 安装时，让 install.sh 使用当前的 CLASH_BASE_DIR 或其默认值
                         do_install_clash "$proxy_url" "$branch" "$clone_dir"
                         ;;
                     *)
@@ -1396,9 +1480,7 @@ manage_clash() {
                         ;;
                 esac
             else
-                # 未安装 -> 直接安装
                 echo "[*] 开始安装 Clash..."
-                # 安装时，让 install.sh 使用当前的 CLASH_BASE_DIR 或其默认值
                 do_install_clash "$proxy_url" "$branch" "$clone_dir"
             fi
             read -p "按回车返回..."
